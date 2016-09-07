@@ -5,7 +5,18 @@ mod_auth_openidc
 HTTP server that authenticates users against an OpenID Connect Provider. It can also
 function as an OAuth 2.0 Resource Server, validating access tokens presented by
 OAuth 2.0 clients against an OAuth 2.0 Authorization Server.
-  
+
+This version of the module can also authenticate against an OAuth2.0 server using the
+Code Authorization Grant flow and a UserInfo endpoint. This has been tested with the
+Phabricator OAuthServer implementation.  Other servers implementing Oauth 2.0 Code
+Authorization Grant Flow, and which provide a suitable API for getting UserInfo as a 
+JSON object may also work.  I tried to make these changes without breaking any
+existing functionality, but have not tested against any OpenID Connect servers,
+so it cannot be guaranteed.
+
+Note that the changes relax some checks, so if your server implements
+OpenID Connect, it may be safer to use the upstream module.
+
 Overview
 --------
 
@@ -15,6 +26,20 @@ OpenID Connect *Provider* (OP). It authenticates users against an OpenID Connect
 receives user identity information from the OP in a so called ID Token and passes the
 identity information (a.k.a. claims) in the ID Token to applications hosted and protected
 by the Apache web server.
+
+If the server is a non-OpenID Connect server that implements the OAuth 2.0 Code
+Authorization Grant flow, the authentication can still be performed, with all user
+identity information coming from a UserInfo endpoint. In this case, you almost certainly
+need to set the OIDCOAuthRemoteUserClaim to something that is returned from the
+UserInfo endpoint.  Some additional options are provided for this case to allow more
+flexibility in the UserInfo endpoint implementation.  OIDCProviderUserInfoEndpointAuth
+can be set to "param" to pass the access token as a parameter to the UserInfo endpoint,
+instead of in an Authorization header. The name of the parameter can be controlled by
+OIDCProviderUserInfoEndpointParam, default is access_token.
+OIDCProviderUserInfoResponseSubkey can be used to extract the claims from an object
+inside the JSON response, instead of extracting them directly from the response object.
+This was required to work with Phabricator's user.whoami API method, which returns
+user information inside a "result" object.
 
 It can also be configured as an OAuth 2.0 Resource Server, consuming bearer access
 tokens and introspecting/validating them against a token introspection endpoint of an
@@ -257,6 +282,41 @@ OIDCOAuthClientSecret 2Federate
    #Require valid-user
    Require claim Username:joe
    #Require claim scope~\bprofile\b
+</Location>
+```
+
+###OAuth 2.0 Code Authorization Grant Flow
+
+Another example config for using a non-OpenID Connect server to perform
+authorization using the OAuth 2.0 Code Authorization Grant flow.  As no
+useful info is available for identifying the REMOTE_USER from plain OAuth 2.0,
+this relies on having a UserInfo endpoint to return at least a user id of
+some sort.  This need not be fully compliant with the OpenID spec for UserInfo
+endpoints, it just needs to return a JSON object.  The example server used here
+is a Phabricator server (https://phabricator.com/), which provides a simple
+OAuth 2.0 server implementation, and a user.whoami API method to obtain information
+about the logged in user (under a result object in the JSON response).
+
+```apache
+OIDCSSLValidateServer Off
+OIDCClientID PHID-OASC-abcdefghijklmnopqrst
+OIDCClientSecret abc123DEFghijklmnop4567rstuvwxyzZYXWUT8910SRQPOnmlijhoauthplaygroundapplication
+OIDCProviderIssuer phabricator.example.com
+OIDCRedirectURI https://localhost/example/redirect_uri/
+OIDCCryptoPassphrase <password>
+OIDCScope "userName realName primaryEmail"
+OIDCProviderAuthorizationEndpoint https://phabricator.example.com/oauthserver/auth/
+OIDCProviderTokenEndpoint https://phabricator.example.com/oauthserver/token/
+OIDCProviderTokenEndpointAuth client_secret_post
+OIDCProviderUserInfoEndpoint https://pahbricator.example.com/api/user.whoami
+OIDCProviderUserInfoEndpointAuth param
+OIDCProviderUserInfoResponseSubkey result
+OIDCORemoteUserClaim userName
+
+
+<Location /example/>
+   AuthType openid-connect
+   Require valid-user
 </Location>
 ```
 

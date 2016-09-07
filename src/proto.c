@@ -1069,6 +1069,15 @@ apr_byte_t oidc_proto_refresh_request(request_rec *r, oidc_cfg *cfg,
 apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg,
 		oidc_provider_t *provider, const char *access_token,
 		const char **response) {
+	const char *bearer = NULL;
+	apr_table_t *params = NULL;
+
+	if (strcmp(provider->userinfo_endpoint_auth, "param") == 0) {
+		params = apr_table_make(r->pool, 5);
+		apr_table_addn(params, provider->userinfo_endpoint_param, access_token);
+	} else {
+		bearer = access_token;
+	}
 
 	/* get a handle to the directory config */
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
@@ -1079,7 +1088,7 @@ apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg,
 
 	/* get the JSON response */
 	if (oidc_util_http_get(r, provider->userinfo_endpoint_url,
-			NULL, NULL, access_token, provider->ssl_validate_server, response,
+			params, NULL, bearer, provider->ssl_validate_server, response,
 			cfg->http_timeout_long, cfg->outgoing_proxy,
 			dir_cfg->pass_cookies, NULL, NULL) == FALSE)
 		return FALSE;
@@ -1264,8 +1273,10 @@ static apr_byte_t oidc_proto_validate_hash_value(request_rec *r,
 	 * get the hash value from the id_token
 	 */
 	char *hash = NULL;
-	apr_jwt_get_string(r->pool, jwt->payload.value.json, key, FALSE, &hash,
-			NULL);
+	if (jwt != NULL) {
+		apr_jwt_get_string(r->pool, jwt->payload.value.json, key, FALSE, &hash,
+						   NULL);
+	}
 
 	/*
 	 * check if the hash was present
@@ -1298,6 +1309,7 @@ static apr_byte_t oidc_proto_validate_hash_value(request_rec *r,
  */
 apr_byte_t oidc_proto_validate_code(request_rec *r, oidc_provider_t *provider,
 		apr_jwt_t *jwt, const char *response_type, const char *code) {
+
 	apr_array_header_t *required_for_flows = apr_array_make(r->pool, 2,
 			sizeof(const char*));
 	*(const char**) apr_array_push(required_for_flows) = "code id_token";
@@ -1318,6 +1330,9 @@ apr_byte_t oidc_proto_validate_access_token(request_rec *r,
 		const char *access_token) {
 	apr_array_header_t *required_for_flows = apr_array_make(r->pool, 2,
 			sizeof(const char*));
+
+	oidc_debug(r, "enter");
+ 
 	*(const char**) apr_array_push(required_for_flows) = "id_token token";
 	*(const char**) apr_array_push(required_for_flows) = "code id_token token";
 	if (oidc_proto_validate_hash_value(r, provider, jwt, response_type,
@@ -1370,10 +1385,12 @@ static apr_byte_t oidc_proto_validate_code_response(request_rec *r,
 	 */
 	if (!oidc_util_spaced_string_contains(r->pool, response_type, "id_token")) {
 		if (id_token == NULL) {
-			oidc_error(r,
+			/* Only warn here, since if OIDCProviderUserInfoEndpoint is set
+			   and OIDCRemoteUserClaim is customized, it is still possible
+			   for OAuth2 Code Authorization Grant Flow to work.  */
+			oidc_warn(r,
 					"requested flow is \"%s\" but no \"id_token\" parameter found in the code response",
 					response_type);
-			return FALSE;
 		}
 	} else {
 		if (id_token != NULL) {
@@ -1570,7 +1587,12 @@ static apr_byte_t oidc_proto_parse_idtoken_and_validate_code(request_rec *r,
 
 	json_t *nonce = json_object_get(proto_state, "nonce");
 
-	if (oidc_proto_parse_idtoken(r, c, provider, id_token,
+	oidc_debug(r, "enter");
+ 
+	/* Allow OAuth2 Code Authorization Grant Flow to get past this check
+	   without an id_token, only an access_token.  */
+	if ((id_token != NULL || !is_code_flow) &&
+		oidc_proto_parse_idtoken(r, c, provider, id_token,
 			nonce ? json_string_value(nonce) : NULL, jwt, is_code_flow) == FALSE)
 		return FALSE;
 
@@ -1606,6 +1628,9 @@ static apr_byte_t oidc_proto_resolve_code_and_validate_response(request_rec *r,
 					json_string_value(
 							json_object_get(proto_state, "state")) :
 					NULL;
+
+	oidc_debug(r, "enter");
+ 
 
 	if (oidc_proto_resolve_code(r, c, provider, apr_table_get(params, "code"),
 			code_verifier, &id_token, &access_token, &token_type, &expires_in,

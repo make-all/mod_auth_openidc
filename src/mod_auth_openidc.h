@@ -252,6 +252,9 @@ typedef struct oidc_provider_t {
 	char *userinfo_signed_response_alg;
 	char *userinfo_encrypted_response_alg;
 	char *userinfo_encrypted_response_enc;
+	char *userinfo_endpoint_auth;
+	char *userinfo_endpoint_param;
+	char *userinfo_response_subkey;
 } oidc_provider_t ;
 
 typedef struct oidc_remote_user_claim_t {

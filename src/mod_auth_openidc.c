@@ -1191,6 +1191,7 @@ static apr_byte_t oidc_get_remote_user(request_rec *r, oidc_cfg *c,
 		oidc_provider_t *provider, apr_jwt_t *jwt, char **user,
 		const char *s_claims) {
 
+	oidc_debug(r, "enter");
 	char *issuer = provider->issuer;
 	char *claim_name = apr_pstrdup(r->pool, c->remote_user_claim.claim_name);
 	int n = strlen(claim_name);
@@ -1208,9 +1209,28 @@ static apr_byte_t oidc_get_remote_user(request_rec *r, oidc_cfg *c,
 	json_error_t json_error;
 	json_t *claims = json_loads(s_claims, 0, &json_error);
 	if (claims == NULL) {
+		if (!jwt) {
+			/* We got to here without an id_token: time to stop.  */
+			oidc_error(r, "No id_token or claims to set REMOTE_USER from.");
+			*user = NULL;
+			return FALSE;
+		}
 		username = apr_pstrdup(r->pool, json_string_value(json_object_get(jwt->payload.value.json, claim_name)));
 	} else {
-		oidc_util_json_merge(jwt->payload.value.json, claims);
+		if (provider->userinfo_response_subkey != NULL) {
+			json_t *sub = json_object_get(claims, provider->userinfo_response_subkey);
+			if (sub == NULL || !json_is_object(sub)) {
+				oidc_error(r, "No %s subkey to take claims from", provider->userinfo_response_subkey);
+				json_decref(claims);
+				return FALSE;
+			}
+			json_incref(sub);
+			json_decref(claims);
+			claims = sub;
+		}
+		if (jwt) {
+			oidc_util_json_merge(jwt->payload.value.json, claims);
+		}
 		username = apr_pstrdup(r->pool, json_string_value(json_object_get(claims, claim_name)));
 		json_decref(claims);
 	}
@@ -1261,9 +1281,11 @@ static void oidc_save_in_session(request_rec *r, oidc_cfg *c,
 	session->expiry =
 			apr_time_now() + apr_time_from_sec(c->session_inactivity_timeout);
 
-	/* store the claims payload in the id_token for later reference */
-	oidc_session_set(r, session, OIDC_IDTOKEN_CLAIMS_SESSION_KEY,
-			id_token_jwt->payload.value.str);
+	if (id_token_jwt) {
+		/* store the claims payload in the id_token for later reference */
+		oidc_session_set(r, session, OIDC_IDTOKEN_CLAIMS_SESSION_KEY,
+						 id_token_jwt->payload.value.str);
+	}
 
 	if (c->session_type != OIDC_SESSION_TYPE_CLIENT_COOKIE) {
 		/* store the compact serialized representation of the id_token for later reference  */
@@ -1315,7 +1337,7 @@ static void oidc_save_in_session(request_rec *r, oidc_cfg *c,
 
 	/* store max session duration in the session as a hard cut-off expiry timestamp */
 	apr_time_t session_expires =
-			(provider->session_max_duration == 0) ?
+			(provider->session_max_duration == 0 && id_token_jwt) ?
 					apr_time_from_sec(id_token_jwt->payload.exp) :
 					(apr_time_now()
 							+ apr_time_from_sec(provider->session_max_duration));
@@ -1477,11 +1499,13 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 				"Error in handling response type.", NULL);
 
 	if (jwt == NULL) {
-		oidc_error(r, "no id_token was provided");
-		return oidc_authorization_response_error(r, c, proto_state,
-				"No id_token was provided.", NULL);
+		/* No id_token was provided, but this may still be able to proceed as an OAuth2
+		   Code Authorization Grant flow. */
+		oidc_warn(r, "no id_token was provided");
+		/* return oidc_authorization_response_error(r, c, proto_state, */
+		/* 		"No id_token was provided.", NULL); */
 	}
-
+	oidc_debug(r, "code check complete, continuing with claim resolution");
 	int expires_in = oidc_parse_expires_in(r,
 			apr_table_get(params, "expires_in"));
 
@@ -1514,7 +1538,8 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 			if (apr_strnatcmp(session->remote_user, r->user) != 0) {
 				oidc_warn(r,
 						"user set from new id_token is different from current one");
-				apr_jwt_destroy(jwt);
+				if (jwt)
+					apr_jwt_destroy(jwt);
 				return oidc_authorization_response_error(r, c, proto_state,
 						"User changed!", NULL);
 			}
@@ -1536,7 +1561,8 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 
 	/* cleanup */
 	json_decref(proto_state);
-	apr_jwt_destroy(jwt);
+	if (jwt)
+		apr_jwt_destroy(jwt);
 
 	/* check that we've actually authenticated a user; functions as error handling for oidc_get_remote_user */
 	if (r->user == NULL)
