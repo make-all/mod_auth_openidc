@@ -6,16 +6,27 @@ HTTP server that authenticates users against an OpenID Connect Provider. It can 
 function as an OAuth 2.0 Resource Server, validating access tokens presented by
 OAuth 2.0 clients against an OAuth 2.0 Authorization Server.
 
-This version of the module can also authenticate against an OAuth2.0 server using the
-Code Authorization Grant flow and a UserInfo endpoint. This has been tested with the
-Phabricator OAuthServer implementation.  Other servers implementing Oauth 2.0 Code
-Authorization Grant Flow, and which provide a suitable API for getting UserInfo as a 
-JSON object may also work.  I tried to make these changes without breaking any
-existing functionality, but have not tested against any OpenID Connect servers,
-so it cannot be guaranteed.
+> This version of the module can also authenticate against an OAuth2.0
+> server using the Code Authorization Grant flow and a UserInfo
+> endpoint. This has been tested with the Phabricator OAuthServer
+> implementation.  Other servers implementing Oauth 2.0 Code
+> Authorization Grant Flow, and which provide a suitable API for
+> getting UserInfo as a JSON object may also work.  I tried to make
+> these changes without breaking any existing functionality, but have
+> not tested against any OpenID Connect servers, so it cannot be
+> guaranteed.
 
-Note that the changes relax some checks, so if your server implements
-OpenID Connect, it may be safer to use the upstream module.
+> Note that the changes to support OAuth 2.0 Code Authorization Grant
+> relax some checks, so if your server implements OpenID Connect, it
+> is safer to use the upstream module from
+> https://github.com/pingidentity/mod_auth_openidc 
+
+> Use of this version is not recommended with public servers that are not
+> completely under your control, as it may open possible attack
+> vectors that may allow an attacker to impersonate a valid user using
+> tokens issued for a different application.  Please read :
+> https://oauth.net/articles/authentication/ and understand the risks
+> before deploying this version of the module.
 
 Overview
 --------
@@ -322,6 +333,12 @@ OIDCORemoteUserClaim userName
 Support
 -------
 
+> Some support resources below for the upstream project may help with any
+> queries you have, but please feedback any issues related to OAuth 2.0
+> Code Authorization Grant to https://github.com/make-all/mod_auth_openidc
+> either through the github issue tracker, or via email to
+> make-all@users.github.com
+
 See the Wiki pages with Frequently Asked Questions at:  
   https://github.com/pingidentity/mod_auth_openidc/wiki   
 There is a Google Group/mailing list at:  
@@ -332,8 +349,8 @@ The corresponding forum/archive is at:
 Disclaimer
 ----------
 
-*This software is open sourced by Ping Identity but not supported commercially
-as such. Any questions/issues should go to the mailing list, the Github issues
-tracker or the author [hzandbelt@pingidentity.com](mailto:hzandbelt@pingidentity.com)
+*The upstream software is open sourced by Ping Identity but not supported commercially
+as such. Any questions/issues should go to the Github issues
+tracker or the author [make-all@users.github.com](mailto:make-all@users.github.com)
 directly See also the DISCLAIMER file in this directory.*
     

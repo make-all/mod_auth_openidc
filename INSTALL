@@ -1,9 +1,15 @@
-If your looking for binary packages, please see:
+If you're looking for binary packages, please see:
   https://github.com/pingidentity/mod_auth_openidc/wiki#8-where-can-i-get-binary-packages
 and proceed with the Configuration section below.
 
 If your platform is not supported or you want to run the latest code,
 you can build from source as described below.
+
+To get the OAuth 2.0 Code Authorization Grant changes, you will need to build
+from source. No binary modules are available, and no plan is made to support
+binary modules due to the fact that this implementation is less secure than
+the upstream project, and I have no desire to have naive users accidentally
+stumble on this when they could have used the upstream's binaries instead.
 
 Installation from source
 ========================

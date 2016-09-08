@@ -1,3 +1,12 @@
+The author of this fork of mod_auth_openidc is:
+
+	Mr Maker <https://github.com/make-all>
+
+All changes made by me are released under the Apache License, Version 2.0 per
+the LICENSE.txt included.
+
+-----------------------------------------------------------------------------
+
 The primary author of mod_auth_openidc is:
 
 	Hans Zandbelt <https://github.com/zandbelt>
