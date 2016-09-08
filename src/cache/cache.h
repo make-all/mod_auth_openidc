@@ -53,6 +53,8 @@
 #ifndef _MOD_AUTH_OPENIDC_CACHE_H_
 #define _MOD_AUTH_OPENIDC_CACHE_H_
 
+#include "apr_global_mutex.h"
+
 typedef void * (*oidc_cache_cfg_create)(apr_pool_t *pool);
 typedef int (*oidc_cache_post_config_function)(server_rec *s);
 typedef int (*oidc_cache_child_init_function)(apr_pool_t *p, server_rec *s);
@@ -64,6 +66,7 @@ typedef apr_byte_t (*oidc_cache_set_function)(request_rec *r,
 typedef int (*oidc_cache_destroy_function)(server_rec *s);
 
 typedef struct oidc_cache_t {
+	apr_byte_t secure;
 	oidc_cache_cfg_create create_config;
 	oidc_cache_post_config_function post_config;
 	oidc_cache_child_init_function child_init;

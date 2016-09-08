@@ -1,3 +1,45 @@
+9/5/2016
+- encapsulate (sub-)directory config handling and fix merging so values can be set back to default values in subdirs
+- bump to 2.0.0rc5
+
+9/2/2016
+- fix JWK creation when no client secret is set e.g. in Implicit flows; closes #168; thanks @asc1
+- bump to 2.0.0rc4
+
+9/1/2016
+- fix HTML decoding of OIDCPreservePost data; closes #165
+- limit max POST data size to 1Mb
+- allow chunked data in POST handling; revise handler
+- change preserve POST JSON data format to urlencoded for performance reasons
+
+8/31/2016
+- allow setting the token endpoint authentication method in the .conf file (for dynamic client registration that sets the .client)
+
+8/30/2016
+- pass refresh token in header/environment variable with OIDCPassRefreshToken; thanks Amit Joshi
+- fix front-channel img-style logout with newer versions of PingFederate that don't send an Accept: image/png header
+
+8/29/2016
+- preserve POST data across authentication requests and discovery with OIDCPreservePost
+- bump to 2.0.0rc3
+
+8/24/2016
+- fix parsing of OIDCOAuthAcceptTokenAs to accept options following ":"
+- bump to 2.0.0rc2
+
+8/5/2016
+- delete the debian directory
+- rename OIDCOAuthTokenEndpointCert/Key to OIDCOAuthIntrospectionEndpointCert/Key
+- pre-release 2.0.0rc1
+
+7/30/2016
+- encrypt state/session JWT cookies and session JWT cache values for non-shm storages
+
+7/29/2016
+- use cjose - https://github.com/cisco/cjose (master) - for JOSE functions
+- use stricter input parsing functions for configuration values
+- bump to 2.0.0rc0
+
 7/21/2016
 - support TLS client authentication to token and introspection endpoints
 - bump to 1.9.0rc3

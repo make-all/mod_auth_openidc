@@ -55,6 +55,8 @@
 #include <http_config.h>
 #include <http_log.h>
 
+#include "apr_shm.h"
+
 #include "../mod_auth_openidc.h"
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
@@ -334,6 +336,7 @@ static int oidc_cache_shm_destroy(server_rec *s) {
 }
 
 oidc_cache_t oidc_cache_shm = {
+		0,
 		oidc_cache_shm_cfg_create,
 		oidc_cache_shm_post_config,
 		oidc_cache_shm_child_init,
