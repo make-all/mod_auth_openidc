@@ -318,7 +318,7 @@ OIDCScope "userName realName primaryEmail"
 OIDCProviderAuthorizationEndpoint https://phabricator.example.com/oauthserver/auth/
 OIDCProviderTokenEndpoint https://phabricator.example.com/oauthserver/token/
 OIDCProviderTokenEndpointAuth client_secret_post
-OIDCProviderUserInfoEndpoint https://pahbricator.example.com/api/user.whoami
+OIDCProviderUserInfoEndpoint https://phabricator.example.com/api/user.whoami
 OIDCProviderUserInfoEndpointAuth param
 OIDCProviderUserInfoResponseSubkey result
 OIDCORemoteUserClaim userName
