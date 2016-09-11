@@ -336,8 +336,7 @@ Support
 > Some support resources below for the upstream project may help with any
 > queries you have, but please feedback any issues related to OAuth 2.0
 > Code Authorization Grant to https://github.com/make-all/mod_auth_openidc
-> either through the github issue tracker, or via email to
-> make-all@users.github.com
+> either through the github issue tracker
 
 See the Wiki pages with Frequently Asked Questions at:  
   https://github.com/pingidentity/mod_auth_openidc/wiki   
@@ -351,6 +350,5 @@ Disclaimer
 
 *The upstream software is open sourced by Ping Identity but not supported commercially
 as such. Any questions/issues should go to the Github issues
-tracker or the author [make-all@users.github.com](mailto:make-all@users.github.com)
-directly See also the DISCLAIMER file in this directory.*
+tracker directly See also the DISCLAIMER file in this directory.*
     
