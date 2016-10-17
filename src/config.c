@@ -333,21 +333,6 @@ static const char *oidc_set_endpoint_auth_slot(cmd_parms *cmd, void *struct_ptr,
 }
 
 /*
- * set a token authentication method for an endpoint and check it is one that we support
- */
-static const char *oidc_set_endpoint_tokenauth_slot(cmd_parms *cmd, void *struct_ptr,
-		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
-
-	if ((apr_strnatcmp(arg, "header") == 0)
-		|| (apr_strnatcmp(arg, "param") == 0)) {
-		return ap_set_string_slot(cmd, cfg, arg);
-	}
-	return "parameter must be 'header' or 'param'";
-}
-
-/*
  * set the response type used
  */
 static const char *oidc_set_response_type(cmd_parms *cmd, void *struct_ptr,
