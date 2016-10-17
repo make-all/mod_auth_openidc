@@ -49,9 +49,6 @@
  * https://github.com/Jasig/mod_auth_cas
  *
  * Other code copied/borrowed/adapted:
- * AES crypto: http://saju.net.in/code/misc/openssl_aes.c.txt
- * session handling: Apache 2.4 mod_session.c
- * session handling backport: http://contribsoft.caixamagica.pt/browser/internals/2012/apachecc/trunk/mod_session-port/src/util_port_compat.c
  * shared memory caching: mod_auth_mellon
  *
  * @Author: Hans Zandbelt - hzandbelt@pingidentity.com
@@ -82,7 +79,6 @@
 // - check self-issued support
 // - README.quickstart
 // - refresh metadata once-per too? (for non-signing key changes)
-// - check the Apache 2.4 compilation/#defines
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -263,8 +259,8 @@ static apr_byte_t oidc_provider_static_config(request_rec *r, oidc_cfg *c,
 		return TRUE;
 	}
 
-	c->cache->get(r, OIDC_CACHE_SECTION_PROVIDER, c->provider.metadata_url,
-			&s_json);
+	c->cache->get(r, OIDC_CACHE_SECTION_PROVIDER,
+			oidc_util_escape_string(r, c->provider.metadata_url), &s_json);
 
 	if (s_json == NULL) {
 
@@ -276,8 +272,8 @@ static apr_byte_t oidc_provider_static_config(request_rec *r, oidc_cfg *c,
 		}
 
 		// TODO: make the expiry configurable
-		c->cache->set(r, OIDC_CACHE_SECTION_PROVIDER, c->provider.metadata_url,
-				s_json,
+		c->cache->set(r, OIDC_CACHE_SECTION_PROVIDER,
+				oidc_util_escape_string(r, c->provider.metadata_url), s_json,
 				apr_time_now() + apr_time_from_sec(OIDC_CACHE_PROVIDER_METADATA_EXPIRY_DEFAULT));
 
 	} else {
@@ -339,7 +335,8 @@ static apr_byte_t oidc_is_discovery_response(request_rec *r, oidc_cfg *cfg) {
 	 * prereq: this is a call to the configured redirect_uri, now see if:
 	 * the OIDC_DISC_OP_PARAM is present
 	 */
-	return oidc_util_request_has_parameter(r, OIDC_DISC_OP_PARAM);
+	return oidc_util_request_has_parameter(r, OIDC_DISC_OP_PARAM)
+			|| oidc_util_request_has_parameter(r, OIDC_DISC_USER_PARAM);
 }
 
 /*
@@ -482,10 +479,10 @@ static int oidc_request_post_preserved_restore(request_rec *r,
 static apr_byte_t oidc_unsolicited_proto_state(request_rec *r, oidc_cfg *c,
 		const char *state, json_t **proto_state) {
 
-	oidc_debug(r, "enter");
+	oidc_debug(r, "enter: state header=%s",
+			oidc_proto_peek_jwt_header(r, state));
 
 	oidc_jose_error_t err;
-
 	oidc_jwk_t *jwk = NULL;
 	if (oidc_util_create_symmetric_key(r, c->provider.client_secret, "sha256",
 			TRUE, &jwk) == FALSE)
@@ -1046,7 +1043,7 @@ static apr_byte_t oidc_refresh_access_token(request_rec *r, oidc_cfg *c,
  */
 static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 		oidc_cfg *c, oidc_provider_t *provider, const char *access_token,
-		oidc_session_t *session) {
+		oidc_session_t *session, char *id_token_sub) {
 
 	oidc_debug(r, "enter");
 
@@ -1064,12 +1061,37 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 		return NULL;
 	}
 
+	if ((id_token_sub == NULL) && (session != NULL)) {
+
+		// when refreshing claims from the userinfo endpoint
+
+		const char *s_id_token_claims = NULL;
+		oidc_session_get(r, session, OIDC_IDTOKEN_CLAIMS_SESSION_KEY,
+				&s_id_token_claims);
+
+		if (s_id_token_claims == NULL) {
+			oidc_error(r, "no id_token claims provided");
+			return NULL;
+		}
+
+		json_error_t json_error;
+		json_t *id_token_claims = json_loads(s_id_token_claims, 0, &json_error);
+
+		if (id_token_claims == NULL) {
+			oidc_error(r, "JSON parsing (json_loads) failed: %s (%s)",
+					json_error.text, s_id_token_claims);
+			return NULL;
+		}
+
+		oidc_jose_get_string(r->pool, id_token_claims, "sub", FALSE, &id_token_sub, NULL);
+	}
+
 	// TODO: return code should indicate whether the token expired or some other error occurred
 	// TODO: long-term: session storage should be JSON (with explicit types and less conversion, using standard routines)
 
 	/* try to get claims from the userinfo endpoint using the provided access token */
 	const char *result = NULL;
-	if (oidc_proto_resolve_userinfo(r, c, provider, access_token,
+	if (oidc_proto_resolve_userinfo(r, c, provider, id_token_sub, access_token,
 			&result) == FALSE) {
 
 		/* see if we have an existing session and we are refreshing the user info claims */
@@ -1081,7 +1103,7 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 					&access_token) == TRUE) {
 
 				/* try again with the new access token */
-				if (oidc_proto_resolve_userinfo(r, c, provider, access_token,
+				if (oidc_proto_resolve_userinfo(r, c, provider, id_token_sub, access_token,
 						&result) == FALSE) {
 
 					oidc_error(r,
@@ -1155,7 +1177,7 @@ static apr_byte_t oidc_refresh_claims_from_userinfo_endpoint(request_rec *r,
 
 			/* retrieve the current claims */
 			claims = oidc_retrieve_claims_from_userinfo_endpoint(r, cfg,
-					provider, access_token, session);
+					provider, access_token, session, NULL);
 
 			/* store claims resolved from userinfo endpoint */
 			oidc_store_userinfo_claims(r, session, provider, claims);
@@ -1721,7 +1743,7 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 	 * parsed claims are not actually used here but need to be parsed anyway for error checking purposes
 	 */
 	const char *claims = oidc_retrieve_claims_from_userinfo_endpoint(r, c,
-			provider, apr_table_get(params, "access_token"), NULL);
+			provider, apr_table_get(params, "access_token"), NULL, jwt->payload.sub);
 
 	/* restore the original protected URL that the user was trying to access */
 	const char *original_url = apr_pstrdup(r->pool,
@@ -2147,10 +2169,12 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 
 	/* variables to hold the values returned in the response */
 	char *issuer = NULL, *target_link_uri = NULL, *login_hint = NULL,
-			*auth_request_params = NULL, *csrf_cookie, *csrf_query = NULL;
+			*auth_request_params = NULL, *csrf_cookie, *csrf_query = NULL,
+			*user = NULL;
 	oidc_provider_t *provider = NULL;
 
 	oidc_util_get_request_parameter(r, OIDC_DISC_OP_PARAM, &issuer);
+	oidc_util_get_request_parameter(r, OIDC_DISC_USER_PARAM, &user);
 	oidc_util_get_request_parameter(r, OIDC_DISC_RT_PARAM, &target_link_uri);
 	oidc_util_get_request_parameter(r, OIDC_DISC_LH_PARAM, &login_hint);
 	oidc_util_get_request_parameter(r, OIDC_DISC_AR_PARAM,
@@ -2175,15 +2199,9 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 
 	// TODO: trim issuer/accountname/domain input and do more input validation
 
-	oidc_debug(r, "issuer=\"%s\", target_link_uri=\"%s\", login_hint=\"%s\"",
-			issuer, target_link_uri, login_hint);
-
-	if (issuer == NULL) {
-		return oidc_util_html_send_error(r, c->error_template,
-				"Invalid Request",
-				"Wherever you came from, it sent you here with the wrong parameters...",
-				HTTP_INTERNAL_SERVER_ERROR);
-	}
+	oidc_debug(r,
+			"issuer=\"%s\", target_link_uri=\"%s\", login_hint=\"%s\", user=\"%s\"",
+			issuer, target_link_uri, login_hint, user);
 
 	if (target_link_uri == NULL) {
 		if (c->default_sso_url == NULL) {
@@ -2205,7 +2223,28 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 	}
 
 	/* find out if the user entered an account name or selected an OP manually */
-	if (strstr(issuer, "@") != NULL) {
+	if (user != NULL) {
+
+		if (login_hint == NULL)
+			login_hint = apr_pstrdup(r->pool, user);
+
+		/* normalize the user identifier */
+		if (strstr(user, "https://") != user)
+			user = apr_psprintf(r->pool, "https://%s", user);
+
+		/* got an user identifier as input, perform OP discovery with that */
+		if (oidc_proto_url_based_discovery(r, c, user, &issuer) == FALSE) {
+
+			/* something did not work out, show a user facing error */
+			return oidc_util_html_send_error(r, c->error_template,
+					"Invalid Request",
+					"Could not resolve the provided user identifier to an OpenID Connect provider; check your syntax.",
+					HTTP_NOT_FOUND);
+		}
+
+		/* issuer is set now, so let's continue as planned */
+
+	} else if (strstr(issuer, "@") != NULL) {
 
 		if (login_hint == NULL) {
 			login_hint = apr_pstrdup(r->pool, issuer);
@@ -2674,6 +2713,50 @@ end:
 }
 
 /*
+ * handle request object by reference request
+ */
+static int oidc_handle_request_uri(request_rec *r, oidc_cfg *c) {
+
+	char *request_ref = NULL;
+	oidc_util_get_request_parameter(r, "request_uri", &request_ref);
+	if (request_ref == NULL) {
+		oidc_error(r, "no \"request_uri\" parameter found");
+		return HTTP_BAD_REQUEST;
+	}
+
+	const char *jwt = NULL;
+	c->cache->get(r, OIDC_CACHE_SECTION_REQUEST_URI, request_ref, &jwt);
+	if (jwt == NULL) {
+		oidc_error(r, "no cached JWT found for request_uri reference: %s",
+				request_ref);
+		return HTTP_NOT_FOUND;
+	}
+
+	c->cache->set(r, OIDC_CACHE_SECTION_REQUEST_URI, request_ref, NULL, 0);
+
+	return oidc_util_http_send(r, jwt, strlen(jwt), " application/jwt", DONE);
+}
+
+/*
+ * handle a request to invalidate a cached access token introspection result
+ */
+static int oidc_handle_remove_at_cache(request_rec *r, oidc_cfg *c) {
+	char *access_token = NULL;
+	oidc_util_get_request_parameter(r, "remove_at_cache", &access_token);
+
+	const char *cache_entry = NULL;
+	c->cache->get(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, access_token, &cache_entry);
+	if (cache_entry == NULL) {
+		oidc_error(r, "no cached access token found for value: %s", access_token);
+		return HTTP_NOT_FOUND;
+	}
+
+	c->cache->set(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, access_token, NULL, 0);
+
+	return DONE;
+}
+
+/*
  * handle all requests to the redirect_uri
  */
 int oidc_handle_redirect_uri_request(request_rec *r, oidc_cfg *c,
@@ -2713,6 +2796,16 @@ int oidc_handle_redirect_uri_request(request_rec *r, oidc_cfg *c,
 
 		/* handle refresh token request */
 		return oidc_handle_refresh_token_request(r, c, session);
+
+	} else if (oidc_util_request_has_parameter(r, "request_uri")) {
+
+		/* handle request object by reference request */
+		return oidc_handle_request_uri(r, c);
+
+	} else if (oidc_util_request_has_parameter(r, "remove_at_cache")) {
+
+		/* handle request to invalidate access token cache */
+		return oidc_handle_remove_at_cache(r, c);
 
 	} else if ((r->args == NULL) || (apr_strnatcmp(r->args, "") == 0)) {
 

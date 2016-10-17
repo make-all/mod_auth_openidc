@@ -165,25 +165,7 @@ static apr_byte_t oidc_metadata_file_read_json(request_rec *r, const char *path,
 		return FALSE;
 
 	/* decode the JSON contents of the buffer */
-	json_error_t json_error;
-	*result = json_loads(buf, 0, &json_error);
-
-	if (*result == NULL) {
-		/* something went wrong */
-		oidc_error(r, "JSON parsing (%s) returned an error: %s", path,
-				json_error.text);
-		return FALSE;
-	}
-
-	if (!json_is_object(*result)) {
-		/* oops, no JSON */
-		oidc_error(r, "parsed JSON from (%s) did not contain a JSON object",
-				path);
-		json_decref(*result);
-		return FALSE;
-	}
-
-	return TRUE;
+	return oidc_util_decode_json_object(r, buf, result);
 }
 
 /*
@@ -561,31 +543,14 @@ static apr_byte_t oidc_metadata_client_register(request_rec *r, oidc_cfg *cfg,
 				json_pack("[s]", cfg->default_slo_url));
 	}
 
+	/* add any custom JSON in to the registration request */
 	if (provider->registration_endpoint_json != NULL) {
-
-		json_error_t json_error;
-		json_t *json = json_loads(provider->registration_endpoint_json, 0,
-				&json_error);
-
-		if (json == NULL) {
-
-			oidc_error(r, "JSON parsing returned an error: %s",
-					json_error.text);
-
-		} else {
-
-			if (!json_is_object(json)) {
-
-				oidc_error(r, "parsed JSON did not contain a JSON object");
-
-			} else {
-
-				oidc_util_json_merge(json, data);
-
-			}
-
-			json_decref(json);
-		}
+		json_t *json = NULL;
+		if (oidc_util_decode_json_object(r, provider->registration_endpoint_json,
+				&json) == FALSE)
+			return FALSE;
+		oidc_util_json_merge(json, data);
+		json_decref(json);
 	}
 
 	/* dynamically register the client with the specified parameters */
@@ -904,8 +869,8 @@ static void oidc_metadata_parse_boolean(request_rec *r, json_t *json,
 static void oidc_metadata_parse_url(request_rec *r, const char *type,
 		const char *issuer, json_t *json, const char *key, char **value,
 		const char *default_value) {
-	if (oidc_metadata_is_valid_uri(r, type, issuer, json, key, value,
-			FALSE) == FALSE) {
+	if ((oidc_metadata_is_valid_uri(r, type, issuer, json, key, value,
+			FALSE) == FALSE) || ((*value == NULL) && (default_value != NULL))) {
 		*value = apr_pstrdup(r->pool, default_value);
 	}
 }
@@ -1144,6 +1109,20 @@ apr_byte_t oidc_metadata_conf_parse(request_rec *r, oidc_cfg *cfg,
 			"token_endpoint_tls_client_key",
 			&provider->token_endpoint_tls_client_key,
 			cfg->provider.token_endpoint_tls_client_key);
+
+	oidc_json_object_get_string(r->pool, j_conf, "request_object",
+			&provider->request_object, cfg->provider.request_object);
+
+	/* see if we've got a custom userinfo endpoint token presentation method */
+	char *method = NULL;
+	oidc_metadata_get_valid_string(r, j_conf, "userinfo_token_method",
+			oidc_valid_userinfo_token_method, &method,
+			NULL);
+	if (method != NULL)
+		oidc_parse_userinfo_token_method(r->pool, method,
+				&provider->userinfo_token_method);
+	else
+		provider->userinfo_token_method = OIDC_USER_INFO_TOKEN_METHOD_HEADER;
 
 	return TRUE;
 }

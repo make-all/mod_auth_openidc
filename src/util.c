@@ -200,6 +200,9 @@ end:
 apr_byte_t oidc_util_jwt_verify(request_rec *r, const char *secret,
 		const char *compact_encoded_jwt, json_t **result) {
 
+	oidc_debug(r, "enter: JWT header=%s",
+			oidc_proto_peek_jwt_header(r, compact_encoded_jwt));
+
 	apr_byte_t rv = FALSE;
 	oidc_jose_error_t err;
 
@@ -637,6 +640,10 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 		goto out;
 	}
 
+	long response_code;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	oidc_debug(r, "HTTP response code=%ld", response_code);
+
 	*response = apr_pstrndup(r->pool, curlBuffer.buf, curlBuffer.written);
 
 	/* set and log the response */
@@ -1024,10 +1031,9 @@ static apr_byte_t oidc_util_check_json_error(request_rec *r, json_t *json) {
 }
 
 /*
- * decode a JSON string, check for "error" results and printout
+ * parse a JSON object
  */
-apr_byte_t oidc_util_decode_json_and_check_error(request_rec *r,
-		const char *str, json_t **json) {
+apr_byte_t oidc_util_decode_json_object(request_rec *r, const char *str, json_t **json) {
 
 	json_error_t json_error;
 	*json = json_loads(str, 0, &json_error);
@@ -1035,7 +1041,7 @@ apr_byte_t oidc_util_decode_json_and_check_error(request_rec *r,
 	/* decode the JSON contents of the buffer */
 	if (*json == NULL) {
 		/* something went wrong */
-		oidc_error(r, "JSON parsing returned an error: %s", json_error.text);
+		oidc_error(r, "JSON parsing returned an error: %s (%s)", json_error.text, str);
 		return FALSE;
 	}
 
@@ -1046,6 +1052,18 @@ apr_byte_t oidc_util_decode_json_and_check_error(request_rec *r,
 		*json = NULL;
 		return FALSE;
 	}
+
+	return TRUE;
+}
+
+/*
+ * decode a JSON string, check for "error" results and printout
+ */
+apr_byte_t oidc_util_decode_json_and_check_error(request_rec *r,
+		const char *str, json_t **json) {
+
+	if (oidc_util_decode_json_object(r, str, json) == FALSE)
+		return FALSE;
 
 	// see if it is not an error response somehow
 	if (oidc_util_check_json_error(r, *json) == TRUE) {
@@ -1212,7 +1230,7 @@ apr_byte_t oidc_util_read_form_encoded_params(request_rec *r,
 	}
 
 	oidc_debug(r, "parsed: %lu bytes in to %d elements",
-			(unsigned long )strlen(data), apr_table_elts(table)->nelts);
+			data ? (unsigned long )strlen(data) : 0 , apr_table_elts(table)->nelts);
 
 	return TRUE;
 }

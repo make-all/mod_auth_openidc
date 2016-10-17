@@ -58,8 +58,6 @@
 #include "mod_auth_openidc.h"
 #include "parse.h"
 
-extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
-
 /*
  * validate an access token against the validation endpoint of the Authorization server and gets a response back
  */
@@ -112,6 +110,8 @@ static apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 	int accept_token_in = oidc_cfg_dir_accept_token_in(r);
 	const char *cookie_name = oidc_cfg_dir_accept_token_in_option(r,
 			OIDC_OAUTH_ACCEPT_TOKEN_IN_OPTION_COOKIE_NAME);
+
+	oidc_debug(r, "accept_token_in=%d", accept_token_in);
 
 	*access_token = NULL;
 
@@ -509,8 +509,10 @@ static apr_byte_t oidc_oauth_set_remote_user(request_rec *r, oidc_cfg *c,
 static apr_byte_t oidc_oauth_validate_jwt_access_token(request_rec *r,
 		oidc_cfg *c, const char *access_token, json_t **token, char **response) {
 
-	oidc_jose_error_t err;
+	oidc_debug(r, "enter: JWT access_token header=%s",
+			oidc_proto_peek_jwt_header(r, access_token));
 
+	oidc_jose_error_t err;
 	oidc_jwk_t *jwk = NULL;
 	if (oidc_util_create_symmetric_key(r, c->provider.client_secret, NULL,
 			TRUE, &jwk) == FALSE)

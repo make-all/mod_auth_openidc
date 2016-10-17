@@ -125,6 +125,8 @@ APLOG_USE_MODULE(auth_openidc);
 #define OIDC_DISC_CB_PARAM "oidc_callback"
 /* parameter name of the OP provider selection in the discovery response */
 #define OIDC_DISC_OP_PARAM "iss"
+/* parameter name of the user URL in the discovery response */
+#define OIDC_DISC_USER_PARAM "disc_user"
 /* parameter name of the original URL in the discovery response */
 #define OIDC_DISC_RT_PARAM "target_link_uri"
 /* parameter name of the original method in the discovery response */
@@ -203,6 +205,7 @@ APLOG_USE_MODULE(auth_openidc);
 #define OIDC_CACHE_SECTION_JWKS "jwks"
 #define OIDC_CACHE_SECTION_ACCESS_TOKEN "access_token"
 #define OIDC_CACHE_SECTION_PROVIDER "provider"
+#define OIDC_CACHE_SECTION_REQUEST_URI "request_uri"
 
 /* http methods */
 #define OIDC_METHOD_GET       "get"
@@ -215,6 +218,11 @@ APLOG_USE_MODULE(auth_openidc);
 #define OIDC_UNAUTH_PASS         2
 #define OIDC_UNAUTH_RETURN401    3
 #define OIDC_UNAUTH_RETURN410    4
+
+#define OIDC_REQUEST_URI_CACHE_DURATION 30
+
+#define OIDC_USER_INFO_TOKEN_METHOD_HEADER 0
+#define OIDC_USER_INFO_TOKEN_METHOD_POST   1
 
 typedef struct oidc_jwks_uri_t {
 	const char *url;
@@ -262,9 +270,9 @@ typedef struct oidc_provider_t {
 	char *userinfo_signed_response_alg;
 	char *userinfo_encrypted_response_alg;
 	char *userinfo_encrypted_response_enc;
-	char *userinfo_endpoint_auth;
-	char *userinfo_endpoint_param;
+	int userinfo_token_method;
 	char *userinfo_response_subkey;
+	char *request_object;
 } oidc_provider_t ;
 
 typedef struct oidc_remote_user_claim_t {
@@ -380,12 +388,14 @@ apr_byte_t oidc_post_preserve_javascript(request_rec *r, const char *location, c
 int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c);
 
 // oidc_proto.c
+char *oidc_proto_peek_jwt_header(request_rec *r, const char *jwt);
 int oidc_proto_authorization_request(request_rec *r, struct oidc_provider_t *provider, const char *login_hint, const char *redirect_uri, const char *state, json_t *proto_state, const char *id_token_hint, const char *code_challenge, const char *auth_request_params);
 apr_byte_t oidc_proto_is_post_authorization_response(request_rec *r, oidc_cfg *cfg);
 apr_byte_t oidc_proto_is_redirect_authorization_response(request_rec *r, oidc_cfg *cfg);
 apr_byte_t oidc_proto_refresh_request(request_rec *r, oidc_cfg *cfg, oidc_provider_t *provider, const char *rtoken, char **id_token, char **access_token, char **token_type, int *expires_in, char **refresh_token);
-apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg, oidc_provider_t *provider, const char *access_token, const char **response);
+apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg, oidc_provider_t *provider, const char *id_token_sub, const char *access_token, const char **response);
 apr_byte_t oidc_proto_account_based_discovery(request_rec *r, oidc_cfg *cfg, const char *acct, char **issuer);
+apr_byte_t oidc_proto_url_based_discovery(request_rec *r, oidc_cfg *cfg, const char *url, char **issuer);
 apr_byte_t oidc_proto_parse_idtoken(request_rec *r, oidc_cfg *cfg, oidc_provider_t *provider, const char *id_token, const char *nonce, oidc_jwt_t **jwt, apr_byte_t is_code_flow);
 int oidc_proto_javascript_implicit(request_rec *r, oidc_cfg *c);
 apr_array_header_t *oidc_proto_supported_flows(apr_pool_t *pool);
@@ -453,6 +463,7 @@ apr_byte_t oidc_util_http_post_json(request_rec *r, const char *url, const json_
 apr_byte_t oidc_util_request_matches_url(request_rec *r, const char *url);
 apr_byte_t oidc_util_request_has_parameter(request_rec *r, const char* param);
 apr_byte_t oidc_util_get_request_parameter(request_rec *r, char *name, char **value);
+apr_byte_t oidc_util_decode_json_object(request_rec *r, const char *str, json_t **json);
 apr_byte_t oidc_util_decode_json_and_check_error(request_rec *r, const char *str, json_t **json);
 int oidc_util_http_send(request_rec *r, const char *data, int data_len, const char *content_type, int success_rvalue);
 int oidc_util_html_send(request_rec *r, const char *title, const char *html_head, const char *on_load, const char *html_body, int status_code);

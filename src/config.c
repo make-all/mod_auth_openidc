@@ -149,10 +149,6 @@
 #define OIDC_DEFAULT_TOKEN_INTROSPECTION_INTERVAL 0
 /* default action to take on an incoming unauthenticated request */
 #define OIDC_DEFAULT_UNAUTH_ACTION OIDC_UNAUTH_AUTHENTICATE
-/* default way to pass the access token to the user info endpoint. */
-#define OIDC_DEFAULT_USERINFO_AUTH_METHOD "header"
-/* default name of parameter to pass the access token to the user info endpoint. */
-#define OIDC_DEFAULT_USERINFO_AUTH_PARAM "access_token"
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -429,6 +425,18 @@ static const char *oidc_set_encrypted_response_enc(cmd_parms *cmd,
 	const char *rv = oidc_valid_encrypted_response_enc(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
+	return OIDC_CONFIG_DIR_RV(cmd, rv);
+}
+
+/*
+ * set the userinfo endpoint token presentation method
+ */
+static const char *oidc_set_userinfo_token_method(cmd_parms *cmd,
+		void *struct_ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+	const char *rv = oidc_parse_userinfo_token_method(cmd->pool, arg,
+			&cfg->provider.userinfo_token_method);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
@@ -770,8 +778,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->provider.userinfo_signed_response_alg = NULL;
 	c->provider.userinfo_encrypted_response_alg = NULL;
 	c->provider.userinfo_encrypted_response_enc = NULL;
-	c->provider.userinfo_endpoint_auth = OIDC_DEFAULT_USERINFO_AUTH_METHOD;
-	c->provider.userinfo_endpoint_param = OIDC_DEFAULT_USERINFO_AUTH_PARAM;
+	c->provider.userinfo_token_method = OIDC_USER_INFO_TOKEN_METHOD_HEADER;
 	c->provider.userinfo_response_subkey = NULL;
 
 	c->oauth.ssl_validate_server = OIDC_DEFAULT_SSL_VALIDATE_SERVER;
@@ -839,6 +846,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->error_template = NULL;
 
 	c->provider.userinfo_refresh_interval = OIDC_DEFAULT_USERINFO_REFRESH_INTERVAL;
+	c->provider.request_object = NULL;
 
 	return c;
 }
@@ -1004,18 +1012,16 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->provider.userinfo_encrypted_response_enc != NULL ?
 					add->provider.userinfo_encrypted_response_enc :
 					base->provider.userinfo_encrypted_response_enc;
-	c->provider.userinfo_endpoint_auth =
-			add->provider.userinfo_endpoint_auth != NULL ?
-					add->provider.userinfo_endpoint_auth :
-					base->provider.userinfo_endpoint_auth;
-	c->provider.userinfo_endpoint_param =
-			add->provider.userinfo_endpoint_param != NULL ?
-					add->provider.userinfo_endpoint_param :
-					base->provider.userinfo_endpoint_param;
+	c->provider.userinfo_token_method =
+			add->provider.userinfo_token_method
+				!= OIDC_USER_INFO_TOKEN_METHOD_HEADER ?
+					add->provider.userinfo_token_method :
+					base->provider.userinfo_token_method;
 	c->provider.userinfo_response_subkey =
 			add->provider.userinfo_response_subkey != NULL ?
 					add->provider.userinfo_response_subkey :
 					base->provider.userinfo_response_subkey;
+
 	c->oauth.ssl_validate_server =
 			add->oauth.ssl_validate_server != OIDC_DEFAULT_SSL_VALIDATE_SERVER ?
 					add->oauth.ssl_validate_server :
@@ -1207,13 +1213,13 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 				!= OIDC_DEFAULT_USERINFO_REFRESH_INTERVAL ?
 					add->provider.userinfo_refresh_interval :
 					base->provider.userinfo_refresh_interval;
+	c->provider.request_object =
+			add->provider.request_object != NULL ?
+					add->provider.request_object :
+					base->provider.request_object;
 
 	return c;
 }
-
-#define OIDC_CONFIG_STRING_UNSET  "_UNSET_"
-#define OIDC_CONFIG_STRING_EMPTY  ""
-#define OIDC_CONFIG_POS_INT_UNSET -1
 
 /*
  * create a new directory config record with defaults
@@ -1905,6 +1911,11 @@ const command_rec oidc_config_cmds[] = {
 				(void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_encrypted_response_enc),
 				RSRC_CONF,
 				"The algorithm that the OP should use to encrypt to encrypt the UserInfo response with the Content Encryption Key (used only in dynamic client registration); must be one of [A128CBC-HS256|A256CBC-HS512|A128GCM|A192GCM|A256GCM]"),
+		AP_INIT_TAKE1("OIDCUserInfoTokenMethod",
+				oidc_set_userinfo_token_method,
+				(void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_token_method),
+				RSRC_CONF,
+				"The method that is used to present the access token to the userinfo endpoint; must be one of [authz_header|post_param]"),
 
 		AP_INIT_TAKE1("OIDCSSLValidateServer",
 				oidc_set_ssl_validate_slot,
@@ -2237,16 +2248,11 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_dir_cfg, pass_refresh_token),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Pass the refresh token in a header and/or environment variable (On or Off)"),
-		AP_INIT_TAKE1("OIDCProviderUserInfoEndpointAuth",
-					  oidc_set_endpoint_tokenauth_slot,
-					  (void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_endpoint_auth),
-					  RSRC_CONF,
-					  "Specify a token passing method for the UserInfo Endpoint"),
-		AP_INIT_TAKE1("OIDCProviderUserInfoEndpointParam",
-					  oidc_set_string_slot,
-					  (void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_endpoint_param),
-					  RSRC_CONF,
-					  "Specfiy the parameter name for passing the token if the method is param"),
+		AP_INIT_TAKE1("OIDCRequestObject",
+				ap_set_string_slot,
+				(void *)APR_OFFSETOF(oidc_cfg, provider.request_object),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"The default request object settings"),
 		AP_INIT_TAKE1("OIDCProviderUserInfoResponseSubkey",
 					  oidc_set_string_slot,
 					  (void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_response_subkey),

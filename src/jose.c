@@ -121,10 +121,28 @@ char *oidc_jwt_serialize(apr_pool_t *pool, oidc_jwt_t *jwt,
 		oidc_jose_error_t *err) {
 	cjose_err cjose_err;
 	const char *cser = NULL;
-	if (cjose_jws_export(jwt->cjose_jws, &cser, &cjose_err) == FALSE) {
-		oidc_jose_error(err, "cjose_jws_export failed: %s",
-				oidc_cjose_e2s(pool, cjose_err));
-		return NULL;
+	if (strcmp(jwt->header.alg, "none") != 0) {
+		if (cjose_jws_export(jwt->cjose_jws, &cser, &cjose_err) == FALSE) {
+			oidc_jose_error(err, "cjose_jws_export failed: %s",
+					oidc_cjose_e2s(pool, cjose_err));
+			return NULL;
+		}
+	} else {
+
+		char *s_payload = json_dumps(jwt->payload.value.json,
+				JSON_PRESERVE_ORDER | JSON_COMPACT);
+
+		char *out = NULL;
+		size_t out_len;
+		if (cjose_base64url_encode((const uint8_t *)s_payload, strlen(s_payload), &out, &out_len,
+				&cjose_err) == FALSE)
+			return FALSE;
+		cser = apr_pstrndup(pool, out, out_len);
+		cjose_get_dealloc()(out);
+
+		free(s_payload);
+
+		cser = apr_psprintf(pool, "eyJhbGciOiJub25lIn0.%s.", cser);
 	}
 	return apr_pstrdup(pool, cser);
 }
@@ -143,6 +161,10 @@ int oidc_jwt_alg2kty(oidc_jwt_t *jwt) {
 	if (strncmp(jwt->header.alg, "ES", 2) == 0)
 		return CJOSE_JWK_KTY_EC;
 #endif
+	if ((strcmp(jwt->header.alg, CJOSE_HDR_ALG_A128KW) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_A192KW) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_A256KW) == 0))
+		return CJOSE_JWK_KTY_OCT;
+	if ((strcmp(jwt->header.alg, CJOSE_HDR_ALG_RSA1_5) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_RSA_OAEP) == 0))
+		return CJOSE_JWK_KTY_RSA;
 	return -1;
 }
 
@@ -284,6 +306,7 @@ apr_byte_t oidc_jwk_to_json(apr_pool_t *pool, oidc_jwk_t *jwk, char **s_json,
 		return FALSE;
 	}
 	*s_json = apr_pstrdup(pool, s);
+	free(s);
 	return TRUE;
 }
 
@@ -563,7 +586,7 @@ static apr_byte_t oidc_jose_parse_payload(apr_pool_t *pool,
 /*
  * decrypt a JWT and return the plaintext
  */
-static uint8_t *oidc_jwe_decrypt(apr_pool_t *pool, cjose_jwe_t *jwe,
+static uint8_t *oidc_jwe_decrypt_impl(apr_pool_t *pool, cjose_jwe_t *jwe,
 		apr_hash_t *keys, size_t *content_len, oidc_jose_error_t *err) {
 
 	uint8_t *decrypted = NULL;
@@ -609,31 +632,42 @@ static uint8_t *oidc_jwe_decrypt(apr_pool_t *pool, cjose_jwe_t *jwe,
 }
 
 /*
- * parse and (optionally) decrypt a JSON Web Token
+ * decrypt a JSON Web Token
  */
-apr_byte_t oidc_jwt_parse(apr_pool_t *pool, const char *input_json,
-		oidc_jwt_t **j_jwt, apr_hash_t *keys, oidc_jose_error_t *err) {
-
-	const char *s_json = NULL;
-
+apr_byte_t oidc_jwe_decrypt(apr_pool_t *pool, const char *input_json,
+		apr_hash_t *keys, char **s_json, oidc_jose_error_t *err, apr_byte_t import_must_succeed) {
 	cjose_err cjose_err;
 	cjose_jwe_t *jwe = cjose_jwe_import(input_json, strlen(input_json),
 			&cjose_err);
 	if (jwe != NULL) {
 		size_t content_len = 0;
-		uint8_t *decrypted = oidc_jwe_decrypt(pool, jwe, keys, &content_len,
+		uint8_t *decrypted = oidc_jwe_decrypt_impl(pool, jwe, keys, &content_len,
 				err);
 		if (decrypted != NULL) {
 			decrypted[content_len] = '\0';
-			s_json = apr_pstrdup(pool, (const char *) decrypted);
+			*s_json = apr_pstrdup(pool, (const char *) decrypted);
 			cjose_get_dealloc()(decrypted);
 		}
 		cjose_jwe_release(jwe);
+	} else if (import_must_succeed == FALSE) {
+		*s_json = apr_pstrdup(pool, input_json);
 	} else {
-		s_json = input_json;
+		oidc_jose_error(err, "cjose_jwe_import failed: %s",
+				oidc_cjose_e2s(pool, cjose_err));
 	}
+	return (*s_json != NULL);
+}
 
-	if (s_json == NULL)
+/*
+ * parse and (optionally) decrypt a JSON Web Token
+ */
+apr_byte_t oidc_jwt_parse(apr_pool_t *pool, const char *input_json,
+		oidc_jwt_t **j_jwt, apr_hash_t *keys, oidc_jose_error_t *err) {
+
+	cjose_err cjose_err;
+	char *s_json = NULL;
+
+	if (oidc_jwe_decrypt(pool, input_json, keys, &s_json, err, FALSE) == FALSE)
 		return FALSE;
 
 	*j_jwt = oidc_jwt_new(pool, FALSE, FALSE);
