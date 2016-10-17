@@ -1441,17 +1441,6 @@ static apr_byte_t oidc_get_remote_user(request_rec *r, oidc_cfg *c,
 				json_string_value(
 						json_object_get(jwt->payload.value.json, claim_name)));
 	} else {
-		if (provider->userinfo_response_subkey != NULL) {
-			json_t *sub = json_object_get(claims, provider->userinfo_response_subkey);
-			if (sub == NULL || !json_is_object(sub)) {
-				oidc_error(r, "No %s subkey to take claims from", provider->userinfo_response_subkey);
-				json_decref(claims);
-				return FALSE;
-			}
-			json_incref(sub);
-			json_decref(claims);
-			claims = sub;
-		}
 		if (jwt) {
 			oidc_util_json_merge(jwt->payload.value.json, claims);
 		}
@@ -1750,6 +1739,32 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 			json_string_value(json_object_get(proto_state, "original_url")));
 	const char *original_method = apr_pstrdup(r->pool,
 			json_string_value(json_object_get(proto_state, "original_method")));
+
+	if (provider && provider->userinfo_response_subkey != NULL) {
+		json_error_t json_error;
+		json_t *j_claims = json_loads(claims, 0, &json_error);
+		if (j_claims == NULL) {
+			oidc_error(r, "UserInfo response does not contain valid JSON to take claims from");
+			return FALSE;
+		}
+		else {
+			json_t *sub = json_object_get(j_claims, provider->userinfo_response_subkey);
+			char *s_claims;
+
+			if (sub == NULL || !json_is_object(sub)) {
+				oidc_error(r, "No %s subkey to take claims from", provider->userinfo_response_subkey);
+				json_decref(j_claims);
+				return FALSE;
+			}
+			json_incref(sub);
+			json_decref(j_claims);
+			j_claims = sub;
+			s_claims = json_dumps(j_claims, JSON_ENCODE_ANY);
+			claims = apr_pstrdup(r->pool, s_claims);
+			free(s_claims);
+			json_decref(j_claims);
+		}
+	}
 
 	/* set the user */
 	if (oidc_get_remote_user(r, c, provider, jwt, &r->user, claims) == TRUE) {
