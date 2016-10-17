@@ -1070,20 +1070,21 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 				&s_id_token_claims);
 
 		if (s_id_token_claims == NULL) {
-			oidc_error(r, "no id_token claims provided");
-			return NULL;
+			oidc_warn(r, "no id_token claims provided");
+//			return NULL;
 		}
+		else {
+			json_error_t json_error;
+			json_t *id_token_claims = json_loads(s_id_token_claims, 0, &json_error);
 
-		json_error_t json_error;
-		json_t *id_token_claims = json_loads(s_id_token_claims, 0, &json_error);
+			if (id_token_claims == NULL) {
+				oidc_error(r, "JSON parsing (json_loads) failed: %s (%s)",
+						   json_error.text, s_id_token_claims);
+				return NULL;
+			}
 
-		if (id_token_claims == NULL) {
-			oidc_error(r, "JSON parsing (json_loads) failed: %s (%s)",
-					json_error.text, s_id_token_claims);
-			return NULL;
+			oidc_jose_get_string(r->pool, id_token_claims, "sub", FALSE, &id_token_sub, NULL);
 		}
-
-		oidc_jose_get_string(r->pool, id_token_claims, "sub", FALSE, &id_token_sub, NULL);
 	}
 
 	// TODO: return code should indicate whether the token expired or some other error occurred
@@ -1732,7 +1733,7 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 	 * parsed claims are not actually used here but need to be parsed anyway for error checking purposes
 	 */
 	const char *claims = oidc_retrieve_claims_from_userinfo_endpoint(r, c,
-			provider, apr_table_get(params, "access_token"), NULL, jwt->payload.sub);
+			provider, apr_table_get(params, "access_token"), NULL, jwt ? jwt->payload.sub : NULL);
 
 	/* restore the original protected URL that the user was trying to access */
 	const char *original_url = apr_pstrdup(r->pool,
