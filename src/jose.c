@@ -148,24 +148,64 @@ char *oidc_jwt_serialize(apr_pool_t *pool, oidc_jwt_t *jwt,
 }
 
 /*
+ * return the key type for an algorithm
+ */
+static int oidc_alg2kty(const char *alg) {
+	if (strcmp(alg, CJOSE_HDR_ALG_DIR) == 0)
+		return CJOSE_JWK_KTY_OCT;
+	if (strncmp(alg, "RS", 2) == 0)
+		return CJOSE_JWK_KTY_RSA;
+	if (strncmp(alg, "PS", 2) == 0)
+		return CJOSE_JWK_KTY_RSA;
+	if (strncmp(alg, "HS", 2) == 0)
+		return CJOSE_JWK_KTY_OCT;
+#if (OIDC_JOSE_EC_SUPPORT)
+	if (strncmp(alg, "ES", 2) == 0)
+		return CJOSE_JWK_KTY_EC;
+#endif
+	if ((strcmp(alg, CJOSE_HDR_ALG_A128KW) == 0)
+			|| (strcmp(alg, CJOSE_HDR_ALG_A192KW) == 0)
+			|| (strcmp(alg, CJOSE_HDR_ALG_A256KW) == 0))
+		return CJOSE_JWK_KTY_OCT;
+	if ((strcmp(alg, CJOSE_HDR_ALG_RSA1_5) == 0)
+			|| (strcmp(alg, CJOSE_HDR_ALG_RSA_OAEP) == 0))
+		return CJOSE_JWK_KTY_RSA;
+	return -1;
+}
+
+/*
  * return the key type of a JWT
  */
 int oidc_jwt_alg2kty(oidc_jwt_t *jwt) {
-	if (strncmp(jwt->header.alg, "RS", 2) == 0)
-		return CJOSE_JWK_KTY_RSA;
-	if (strncmp(jwt->header.alg, "PS", 2) == 0)
-		return CJOSE_JWK_KTY_RSA;
-	if (strncmp(jwt->header.alg, "HS", 2) == 0)
-		return CJOSE_JWK_KTY_OCT;
-#if (OIDC_JOSE_EC_SUPPORT)
-	if (strncmp(jwt->header.alg, "ES", 2) == 0)
-		return CJOSE_JWK_KTY_EC;
-#endif
-	if ((strcmp(jwt->header.alg, CJOSE_HDR_ALG_A128KW) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_A192KW) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_A256KW) == 0))
-		return CJOSE_JWK_KTY_OCT;
-	if ((strcmp(jwt->header.alg, CJOSE_HDR_ALG_RSA1_5) == 0) || (strcmp(jwt->header.alg, CJOSE_HDR_ALG_RSA_OAEP) == 0))
-		return CJOSE_JWK_KTY_RSA;
-	return -1;
+	return oidc_alg2kty(jwt->header.alg);
+}
+
+/*
+ * return the key size for an algorithm
+ */
+int oidc_alg2keysize(const char *alg) {
+
+	if (alg == NULL)
+		return 0;
+
+	if (strcmp(alg, CJOSE_HDR_ALG_A128KW) == 0)
+		return 16;
+	if (strcmp(alg, CJOSE_HDR_ALG_A192KW) == 0)
+		return 24;
+	if (strcmp(alg, CJOSE_HDR_ALG_A256KW) == 0)
+		return 32;
+
+	if ((strcmp(alg, "RS256") == 0) || (strcmp(alg, "PS256") == 0)
+			|| (strcmp(alg, "HS256") == 0))
+		return 32;
+	if ((strcmp(alg, "RS384") == 0) || (strcmp(alg, "PS384") == 0)
+			|| (strcmp(alg, "HS384") == 0))
+		return 48;
+	if ((strcmp(alg, "RS512") == 0) || (strcmp(alg, "PS512") == 0)
+			|| (strcmp(alg, "HS512") == 0))
+		return 64;
+
+	return 0;
 }
 
 /*
@@ -516,13 +556,13 @@ apr_byte_t oidc_jose_get_string(apr_pool_t *pool, json_t *json,
  * parse (optional) timestamp from payload
  */
 static apr_byte_t oidc_jose_get_timestamp(apr_pool_t *pool, json_t *json,
-		const char *claim_name, apr_byte_t is_mandatory, json_int_t *result,
+		const char *claim_name, apr_byte_t is_mandatory, double *result,
 		oidc_jose_error_t *err) {
 	*result = OIDC_JWT_CLAIM_TIME_EMPTY;
 	json_t *v = json_object_get(json, claim_name);
 	if (v != NULL) {
-		if (json_is_integer(v)) {
-			*result = json_integer_value(v);
+		if (json_is_number(v)) {
+			*result = json_number_value(v);
 		} else if (is_mandatory) {
 			oidc_jose_error(err,
 					"mandatory JSON key \"%s\" was found but the type is not a number",
@@ -596,6 +636,7 @@ static uint8_t *oidc_jwe_decrypt_impl(apr_pool_t *pool, cjose_jwe_t *jwe,
 	cjose_err cjose_err;
 	cjose_header_t *hdr = cjose_jwe_get_protected(jwe);
 	const char *kid = cjose_header_get(hdr, CJOSE_HDR_KID, &cjose_err);
+	const char *alg = cjose_header_get(hdr, CJOSE_HDR_ALG, &cjose_err);
 
 	if (kid != NULL) {
 
@@ -615,10 +656,13 @@ static uint8_t *oidc_jwe_decrypt_impl(apr_pool_t *pool, cjose_jwe_t *jwe,
 
 		for (hi = apr_hash_first(pool, keys); hi; hi = apr_hash_next(hi)) {
 			apr_hash_this(hi, NULL, NULL, (void **) &jwk);
-			decrypted = cjose_jwe_decrypt(jwe, jwk->cjose_jwk, content_len,
-					&cjose_err);
-			if (decrypted != NULL)
-				break;
+
+			if (jwk->kty == oidc_alg2kty(alg)) {
+				decrypted = cjose_jwe_decrypt(jwe, jwk->cjose_jwk, content_len,
+						&cjose_err);
+				if (decrypted != NULL)
+					break;
+			}
 		}
 
 		if (decrypted == NULL)
@@ -848,13 +892,16 @@ apr_byte_t oidc_jwt_verify(apr_pool_t *pool, oidc_jwt_t *jwt, apr_hash_t *keys,
 
 		for (hi = apr_hash_first(pool, keys); hi; hi = apr_hash_next(hi)) {
 			apr_hash_this(hi, NULL, NULL, (void **) &jwk);
-			rc = cjose_jws_verify(jwt->cjose_jws, jwk->cjose_jwk, &cjose_err);
-			if (rc == FALSE) {
-				oidc_jose_error(err, "cjose_jws_verify failed: %s",
-						oidc_cjose_e2s(pool, cjose_err));
-				jwt->cjose_jws = NULL;
+			if (jwk->kty == oidc_jwt_alg2kty(jwt)) {
+				rc = cjose_jws_verify(jwt->cjose_jws, jwk->cjose_jwk,
+						&cjose_err);
+				if (rc == FALSE) {
+					oidc_jose_error(err, "cjose_jws_verify failed: %s",
+							oidc_cjose_e2s(pool, cjose_err));
+					jwt->cjose_jws = NULL;
+				}
 			}
-			if (rc == TRUE)
+			if ((rc == TRUE) || (jwt->cjose_jws == NULL))
 				break;
 		}
 

@@ -1,3 +1,57 @@
+11/19/2016
+- release 2.1.2
+
+11/18/2016
+- fix crash when searching for keys with a kid, there's no initial match and x5t values exist for the non-matching keys; closes #196
+
+11/9/2016
+- remove stale claims from session when refreshing them from the userinfo endpoint fails; addresses #194
+- release 2.1.1
+
+11/8/2016
+- log readable error messages when memcache operations fail
+
+11/6/2016
+- fix memory leak when skipping jwks_uri keys with a non-matching "use" value
+
+11/4/2016
+- always restore id_token/claims on sub-requests so e.g. listing claims-protected subdirectories will work
+- remove obsolete functions for storing the session in the request state
+- bump to 2.1.1rc0
+
+11/3/2016
+- remove obsolete sessions from session cache; thanks @stevedave
+
+11/1/2016
+- release version 2.1.0
+
+10/28/2016
+- don't include encryption keys from the jwks_uri when verifying a JWT and no kid has been specified
+- fix memory leaks in composite claim handling
+
+10/27/2016
+- handle aggregated and distributed claims from the userinfo endpoint
+- only pick private_key_jwt token endpoint authentication if a private key is configured; closes #189
+- bump to 2.0.1rc7
+
+10/24/2016
+- add OpenID Connect RP certification test script
+- handle non-integer exp/iat timestamps; closes #187; thanks @drdivano
+
+10/21/2016
+- bugfix: first truncate files before writing them
+- support refreshing provider metadata based on timestamp and OIDCProviderMetadataRefreshInterval
+
+10/20/2016
+- bugfix: correctly truncate encryption keys derived from client secret for algorithms that require a key size < 256 bits
+- add test/test-cmd tool
+- bugfix: return error on session cache failures; closes #185; thanks @solsson
+- bump to 2.0.1rc6
+
+10/18/2016
+- bugfix: JWTs with a header that doesn't specify a `kid` that would not validate when used with more than 1 key; closes #184; thanks @solsson
+- bump to 2.0.1rc5
+
 10/13/2016
 - urlencode provider URL cache key to fix file cache backend issue; closes #179, thanks @djahandarie
 

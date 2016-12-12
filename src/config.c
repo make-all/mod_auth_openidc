@@ -149,6 +149,8 @@
 #define OIDC_DEFAULT_TOKEN_INTROSPECTION_INTERVAL 0
 /* default action to take on an incoming unauthenticated request */
 #define OIDC_DEFAULT_UNAUTH_ACTION OIDC_UNAUTH_AUTHENTICATE
+/* defines for how long provider metadata will be cached */
+#define OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL 0
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -320,13 +322,23 @@ static const char *oidc_set_ssl_validate_slot(cmd_parms *cmd, void *struct_ptr,
 }
 
 /*
+ * return the right token endpoint authentication method validation function, based on whether private keys are set
+ */
+oidc_valid_function_t oidc_cfg_get_valid_endpoint_auth_function(oidc_cfg *cfg) {
+	return (cfg->private_keys != NULL) ?
+						oidc_valid_endpoint_auth_method :
+						oidc_valid_endpoint_auth_method_no_private_key;
+}
+
+/*
  * set an authentication method for an endpoint and check it is one that we support
  */
 static const char *oidc_set_endpoint_auth_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
 	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
 			cmd->server->module_config, &auth_openidc_module);
-	const char *rv = oidc_valid_endpoint_auth_method(cmd->pool, arg);
+	const char *rv = oidc_cfg_get_valid_endpoint_auth_function(cfg)(
+			cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -833,6 +845,8 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->provider.userinfo_refresh_interval = OIDC_DEFAULT_USERINFO_REFRESH_INTERVAL;
 	c->provider.request_object = NULL;
 
+	c->provider_metadata_refresh_interval = OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL;
+
 	return c;
 }
 
@@ -1202,6 +1216,12 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->provider.request_object != NULL ?
 					add->provider.request_object :
 					base->provider.request_object;
+
+	c->provider_metadata_refresh_interval =
+			add->provider_metadata_refresh_interval
+				!= OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL ?
+					add->provider_metadata_refresh_interval :
+					base->provider_metadata_refresh_interval;
 
 	return c;
 }
@@ -2238,6 +2258,11 @@ const command_rec oidc_config_cmds[] = {
 				(void *)APR_OFFSETOF(oidc_cfg, provider.request_object),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"The default request object settings"),
+		AP_INIT_TAKE1("OIDCProviderMetadataRefreshInterval",
+				oidc_set_int_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, provider_metadata_refresh_interval),
+				RSRC_CONF,
+				"Provider metadata refresh interval in seconds."),
 		AP_INIT_TAKE1("OIDCProviderUserInfoResponseSubkey",
 					  oidc_set_string_slot,
 					  (void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_response_subkey),

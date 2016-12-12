@@ -59,6 +59,7 @@
 
 #include "jose.h"
 #include "cache/cache.h"
+#include "parse.h"
 
 #ifdef APLOG_USE_MODULE
 APLOG_USE_MODULE(auth_openidc);
@@ -371,6 +372,9 @@ typedef struct oidc_cfg {
 	char *outgoing_proxy;
 
 	char *crypto_passphrase;
+
+	int provider_metadata_refresh_interval;
+
 } oidc_cfg;
 
 int oidc_check_user_id(request_rec *r);
@@ -388,7 +392,7 @@ apr_byte_t oidc_post_preserve_javascript(request_rec *r, const char *location, c
 int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c);
 
 // oidc_proto.c
-char *oidc_proto_peek_jwt_header(request_rec *r, const char *jwt);
+char *oidc_proto_peek_jwt_header(request_rec *r, const char *jwt, char **alg);
 int oidc_proto_authorization_request(request_rec *r, struct oidc_provider_t *provider, const char *login_hint, const char *redirect_uri, const char *state, json_t *proto_state, const char *id_token_hint, const char *code_challenge, const char *auth_request_params);
 apr_byte_t oidc_proto_is_post_authorization_response(request_rec *r, oidc_cfg *cfg);
 apr_byte_t oidc_proto_is_redirect_authorization_response(request_rec *r, oidc_cfg *cfg);
@@ -446,6 +450,7 @@ int oidc_cfg_dir_preserve_post(request_rec *r);
 apr_array_header_t *oidc_dir_cfg_pass_cookies(request_rec *r);
 apr_array_header_t *oidc_dir_cfg_strip_cookies(request_rec *r);
 int oidc_dir_cfg_unauth_action(request_rec *r);
+oidc_valid_function_t oidc_cfg_get_valid_endpoint_auth_function(oidc_cfg *cfg);
 
 // oidc_util.c
 int oidc_strnenvcmp(const char *a, const char *b, int len);
@@ -494,12 +499,12 @@ apr_byte_t oidc_util_jwt_create(request_rec *r, const char *secret, json_t *payl
 apr_byte_t oidc_util_jwt_verify(request_rec *r, const char *secret, const char *compact_encoded_jwt, json_t **result);
 char *oidc_util_get_chunked_cookie(request_rec *r, const char *cookieName, int cookie_chunk_size);
 void oidc_util_set_chunked_cookie(request_rec *r, const char *cookieName, const char *cookieValue, apr_time_t expires, int chunkSize);
-apr_byte_t oidc_util_create_symmetric_key(request_rec *r, const char *client_secret, const char *hash_algo, apr_byte_t set_kid, oidc_jwk_t **jwk);
+apr_byte_t oidc_util_create_symmetric_key(request_rec *r, const char *client_secret, int r_key_len, const char *hash_algo, apr_byte_t set_kid, oidc_jwk_t **jwk);
 apr_hash_t * oidc_util_merge_symmetric_key(apr_pool_t *pool, apr_hash_t *private_keys, oidc_jwk_t *jwk);
 
 // oidc_metadata.c
 apr_byte_t oidc_metadata_provider_retrieve(request_rec *r, oidc_cfg *cfg, const char *issuer, const char *url, json_t **j_metadata, const char **response);
-apr_byte_t oidc_metadata_provider_parse(request_rec *r, json_t *j_provider, oidc_provider_t *provider);
+apr_byte_t oidc_metadata_provider_parse(request_rec *r, oidc_cfg *cfg, json_t *j_provider, oidc_provider_t *provider);
 apr_byte_t oidc_metadata_list(request_rec *r, oidc_cfg *cfg, apr_array_header_t **arr);
 apr_byte_t oidc_metadata_get(request_rec *r, oidc_cfg *cfg, const char *selected, oidc_provider_t **provider, apr_byte_t allow_discovery);
 apr_byte_t oidc_metadata_jwks_get(request_rec *r, oidc_cfg *cfg, const oidc_jwks_uri_t *jwks_uri, json_t **j_jwks, apr_byte_t *refresh);
@@ -516,5 +521,6 @@ apr_byte_t oidc_session_get(request_rec *r, oidc_session_t *z, const char *key, 
 apr_byte_t oidc_session_set(request_rec *r, oidc_session_t *z, const char *key, const char *value);
 apr_byte_t oidc_session_save(request_rec *r, oidc_session_t *z);
 apr_byte_t oidc_session_kill(request_rec *r, oidc_session_t *z);
+apr_byte_t oidc_session_free(request_rec *r, oidc_session_t *z);
 
 #endif /* MOD_AUTH_OPENIDC_H_ */

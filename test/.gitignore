@@ -5,3 +5,6 @@
 /*.o
 /*.slo
 /.libs/
+/test-cmd
+/*.json
+/setenv.sh

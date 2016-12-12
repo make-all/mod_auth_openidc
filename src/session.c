@@ -133,34 +133,41 @@ static apr_byte_t oidc_session_save_cache(request_rec *r, oidc_session_t *z) {
 	oidc_cfg *c = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 
-	/* get a new uuid for this session */
-	apr_uuid_t uuid;
-	apr_uuid_get(&uuid);
-	char key[APR_UUID_FORMATTED_LENGTH + 1];
-	apr_uuid_format((char *) &key, &uuid);
+	apr_byte_t rc = TRUE;
+
+	/* check for an old cache entry */
+	char *oldkey = oidc_util_get_cookie(r, oidc_cfg_dir_cookie(r));
+
+	if (oldkey != NULL) {
+		/* remove the old session from the cache */
+		rc = c->cache->set(r, OIDC_CACHE_SECTION_SESSION, oldkey, NULL, 0);
+	}
 
 	if (z->state != NULL) {
+		/* get a new uuid for this session */
+		apr_uuid_t uuid;
+		apr_uuid_get(&uuid);
+		char key[APR_UUID_FORMATTED_LENGTH + 1];
+		apr_uuid_format((char *) &key, &uuid);
 
 		/* store the string-encoded session in the cache */
 		char *s_value = NULL;
 		if (oidc_session_encode(r, c, z, &s_value, c->cache->secure) == FALSE)
 			return FALSE;
-		c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, s_value, z->expiry);
+		rc = c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, s_value,
+				z->expiry);
 
-		/* set the uuid in the cookie */
-		oidc_util_set_cookie(r, oidc_cfg_dir_cookie(r), key,
-				c->persistent_session_cookie ? z->expiry : -1);
+		if (rc == TRUE)
+			/* set the uuid in the cookie */
+			oidc_util_set_cookie(r, oidc_cfg_dir_cookie(r), key,
+					c->persistent_session_cookie ? z->expiry : -1);
 
 	} else {
-
 		/* clear the cookie */
 		oidc_util_set_cookie(r, oidc_cfg_dir_cookie(r), "", 0);
-
-		/* remove the session from the cache */
-		c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, NULL, 0);
 	}
 
-	return TRUE;
+	return rc;
 }
 
 /*
@@ -201,13 +208,6 @@ apr_byte_t oidc_session_load(request_rec *r, oidc_session_t **zz) {
 	oidc_cfg *c = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 
-	/* first see if this is a sub-request and it was set already in the main request */
-	if (((*zz) = (oidc_session_t *) oidc_request_state_get(r, "session"))
-			!= NULL) {
-		oidc_debug(r, "loading session from request state");
-		return TRUE;
-	}
-
 	/* allocate space for the session object and fill it */
 	oidc_session_t *z = (*zz = apr_pcalloc(r->pool, sizeof(oidc_session_t)));
 
@@ -234,9 +234,8 @@ apr_byte_t oidc_session_load(request_rec *r, oidc_session_t **zz) {
 		if (apr_time_now() > z->expiry) {
 
 			oidc_warn(r, "session restored from cache has expired");
-			json_decref(z->state);
+			oidc_session_free(r, z);
 			z->state = json_object();
-			z->expiry = 0;
 
 		} else {
 
@@ -248,9 +247,6 @@ apr_byte_t oidc_session_load(request_rec *r, oidc_session_t **zz) {
 		z->state = json_object();
 	}
 
-	/* store this session in the request context, so it is available to sub-requests */
-	oidc_request_state_set(r, "session", (const char *) z);
-
 	return TRUE;
 }
 
@@ -261,25 +257,37 @@ apr_byte_t oidc_session_save(request_rec *r, oidc_session_t *z) {
 	oidc_cfg *c = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 
+	apr_byte_t rc = TRUE;
+
 	if (z->state != NULL) {
 		oidc_session_set(r, z, OIDC_SESSION_REMOTE_USER_KEY, z->remote_user);
 		json_object_set_new(z->state, OIDC_SESSION_EXPIRY_KEY,
 				json_integer(apr_time_sec(z->expiry)));
 	}
 
-	/* store this session in the request context, so it is available to sub-requests as a quicker-than-file-backend cache */
-	oidc_request_state_set(r, "session", (const char *) z);
-
 	if (c->session_type == OIDC_SESSION_TYPE_SERVER_CACHE) {
 		/* store the session in the cache */
-		oidc_session_save_cache(r, z);
+		rc = oidc_session_save_cache(r, z);
 	} else if (c->session_type == OIDC_SESSION_TYPE_CLIENT_COOKIE) {
 		/* store the session in a self-contained cookie */
-		oidc_session_save_cookie(r, z);
+		rc = oidc_session_save_cookie(r, z);
 	} else {
 		oidc_error(r, "unknown session type: %d", c->session_type);
+		rc = FALSE;
 	}
 
+	return rc;
+}
+
+/*
+ * free resources allocated for a session
+ */
+apr_byte_t oidc_session_free(request_rec *r, oidc_session_t *z) {
+	if (z->state) {
+		json_decref(z->state);
+		z->state = NULL;
+	}
+	z->expiry = 0;
 	return TRUE;
 }
 
@@ -287,11 +295,7 @@ apr_byte_t oidc_session_save(request_rec *r, oidc_session_t *z) {
  * terminate a session
  */
 apr_byte_t oidc_session_kill(request_rec *r, oidc_session_t *z) {
-	if (z->state) {
-		json_decref(z->state);
-		z->state = NULL;
-	}
-	z->expiry = 0;
+	oidc_session_free(r, z);
 	return oidc_session_save(r, z);
 }
 
