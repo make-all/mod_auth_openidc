@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/pingidentity/mod_auth_openidc.svg?branch=master)](https://travis-ci.org/pingidentity/mod_auth_openidc)
+Upstream [![Build Status](https://travis-ci.org/pingidentity/mod_auth_openidc.svg?branch=master)](https://travis-ci.org/pingidentity/mod_auth_openidc)
 
 mod_auth_openidc
 ================
@@ -340,7 +340,7 @@ Support
 > Some support resources below for the upstream project may help with any
 > queries you have, but please feedback any issues related to OAuth 2.0
 > Code Authorization Grant to https://github.com/make-all/mod_auth_openidc
-> either through the github issue tracker
+> through the github issue tracker.
 
 See the Wiki pages with Frequently Asked Questions at:  
   https://github.com/pingidentity/mod_auth_openidc/wiki   
