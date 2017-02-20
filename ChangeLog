@@ -1,3 +1,25 @@
+01/25/2017
+- release 2.1.4
+
+01/18/2017
+- don't echo the query parameters on the error page when an invalid request is made to the Redirect URI; closes #212; thanks @LukasReschke
+
+01/14/2017
+- use dynamic memory buffer for writing HTTP call responses; solves curl/mpm-event interference; see #207
+- bump to 2.1.4rc1
+
+01/10/2017
+- don't crash when data is POST-ed to the redirect URL, it has just 1 POST parameter and it is not "response_mode"
+
+01/2/2017
+- remove trailing linebreaks from input in test-cmd tool
+- bump copyright year to 2017
+
+12/14/2016
+- support Libre SSL, see #205, thanks @AliceWonderMiscreations
+- update OIDC logout support to Front-Channel Logout 1.0 draft 01: http://openid.net/specs/openid-connect-frontchannel-1_0.html
+- bump to 2.1.4rc0
+
 12/13/2016
 - release 2.1.3
 

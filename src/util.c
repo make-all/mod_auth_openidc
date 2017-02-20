@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2013-2016 Ping Identity Corporation
+ * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
  * For further information please contact:
@@ -449,28 +449,48 @@ char *oidc_get_current_url(request_rec *r) {
 	return url;
 }
 
-/* maximum size of any response returned in HTTP calls */
-#define OIDC_CURL_MAX_RESPONSE_SIZE 65536
-
 /* buffer to hold HTTP call responses */
 typedef struct oidc_curl_buffer {
-	char buf[OIDC_CURL_MAX_RESPONSE_SIZE];
-	size_t written;
+	request_rec *r;
+	char *memory;
+	size_t size;
 } oidc_curl_buffer;
+
+/* maximum acceptable size of HTTP responses: 1 Mb */
+#define OIDC_CURL_MAX_RESPONSE_SIZE 1024 * 1024
 
 /*
  * callback for CURL to write bytes that come back from an HTTP call
  */
-size_t oidc_curl_write(const void *ptr, size_t size, size_t nmemb, void *stream) {
-	oidc_curl_buffer *curlBuffer = (oidc_curl_buffer *) stream;
+size_t oidc_curl_write(void *contents, size_t size, size_t nmemb, void *userp) {
+	size_t realsize = size * nmemb;
+	oidc_curl_buffer *mem = (oidc_curl_buffer *) userp;
 
-	if ((nmemb * size) + curlBuffer->written >= OIDC_CURL_MAX_RESPONSE_SIZE)
+	/* check if we don't run over the maximum buffer/memory size for HTTP responses */
+	if (mem->size + realsize > OIDC_CURL_MAX_RESPONSE_SIZE) {
+		oidc_error(mem->r,
+				"HTTP response larger than maximum allowed size: current size=%ld, additional size=%ld, max=%d",
+				mem->size, realsize, OIDC_CURL_MAX_RESPONSE_SIZE);
 		return 0;
+	}
 
-	memcpy((curlBuffer->buf + curlBuffer->written), ptr, (nmemb * size));
-	curlBuffer->written += (nmemb * size);
+	/* allocate the new buffer for the current + new response bytes */
+	char *newptr = apr_palloc(mem->r->pool, mem->size + realsize + 1);
+	if (newptr == NULL) {
+		oidc_error(mem->r,
+				"memory allocation for new buffer of %ld bytes failed",
+				mem->size + realsize + 1);
+		return 0;
+	}
 
-	return (nmemb * size);
+	/* copy over the data from current memory plus the cURL buffer */
+	memcpy(newptr, mem->memory, mem->size);
+	memcpy(&(newptr[mem->size]), contents, realsize);
+	mem->size += realsize;
+	mem->memory = newptr;
+	mem->memory[mem->size] = 0;
+
+	return realsize;
 }
 
 /* context structure for encoding parameters */
@@ -519,6 +539,9 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 		return FALSE;
 	}
 
+	/* set the error buffer as empty before performing a request */
+	curlError[0] = 0;
+
 	/* some of these are not really required */
 	curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
 	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
@@ -531,10 +554,11 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 
 	/* setup the buffer where the response will be written to */
-	curlBuffer.written = 0;
-	memset(curlBuffer.buf, '\0', sizeof(curlBuffer.buf));
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &curlBuffer);
+	curlBuffer.r = r;
+	curlBuffer.memory = NULL;
+	curlBuffer.size = 0;
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, oidc_curl_write);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void * )&curlBuffer);
 
 #ifndef LIBCURL_NO_CURLPROTO
 	curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
@@ -635,7 +659,8 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	/* call it and record the result */
 	int rv = TRUE;
 	if (curl_easy_perform(curl) != CURLE_OK) {
-		oidc_error(r, "curl_easy_perform() failed on: %s (%s)", url, curlError);
+		oidc_error(r, "curl_easy_perform() failed on: %s (%s)", url,
+				curlError[0] ? curlError : "");
 		rv = FALSE;
 		goto out;
 	}
@@ -644,10 +669,10 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 	oidc_debug(r, "HTTP response code=%ld", response_code);
 
-	*response = apr_pstrndup(r->pool, curlBuffer.buf, curlBuffer.written);
+	*response = apr_pstrndup(r->pool, curlBuffer.memory, curlBuffer.size);
 
 	/* set and log the response */
-	oidc_debug(r, "response=%s", *response);
+	oidc_debug(r, "response=%s", *response ? *response : "");
 
 out:
 

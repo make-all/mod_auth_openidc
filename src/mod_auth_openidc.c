@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2013-2016 Ping Identity Corporation
+ * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
  * For further information please contact:
@@ -1888,6 +1888,7 @@ static int oidc_handle_post_authorization_response(request_rec *r, oidc_cfg *c,
 	/* see if we've got any POST-ed data at all */
 	if ((apr_table_elts(params)->nelts < 1)
 			|| ((apr_table_elts(params)->nelts == 1)
+					&& apr_table_get(params, "response_mode")
 					&& (apr_strnatcmp(apr_table_get(params, "response_mode"),
 							"fragment") == 0))) {
 		return oidc_util_html_send_error(r, c->error_template,
@@ -2883,11 +2884,15 @@ int oidc_handle_redirect_uri_request(request_rec *r, oidc_cfg *c,
 		oidc_handle_redirect_authorization_response(r, c, session);
 	}
 
+	oidc_error(r,
+			"The OpenID Connect callback URL received an invalid request: %s; returning HTTP_INTERNAL_SERVER_ERROR",
+			r->args);
+
 	/* something went wrong */
 	return oidc_util_html_send_error(r, c->error_template, "Invalid Request",
 			apr_psprintf(r->pool,
-					"The OpenID Connect callback URL received an invalid request: %s",
-					r->args), HTTP_INTERNAL_SERVER_ERROR);
+					"The OpenID Connect callback URL received an invalid request"),
+					HTTP_INTERNAL_SERVER_ERROR);
 }
 
 /*
