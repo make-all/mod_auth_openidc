@@ -51,7 +51,7 @@
  * Other code copied/borrowed/adapted:
  * shared memory caching: mod_auth_mellon
  *
- * @Author: Hans Zandbelt - hzandbelt@pingidentity.com
+ * @Author: Hans Zandbelt - hans.zandbelt@zmartzone.eu
  *
  **************************************************************************/
 
@@ -127,6 +127,30 @@ static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix,
 
 	/* overwrite the incoming headers with the cleaned result */
 	r->headers_in = clean_headers;
+}
+
+/*
+ * scrub all mod_auth_openidc related headers
+ */
+static void oidc_scrub_headers(request_rec *r) {
+	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+
+	if (cfg->scrub_request_headers != 0) {
+
+		/* scrub all headers starting with OIDC_ first */
+		oidc_scrub_request_headers(r, OIDC_DEFAULT_HEADER_PREFIX,
+				oidc_cfg_dir_authn_header(r));
+
+		/*
+		 * then see if the claim headers need to be removed on top of that
+		 * (i.e. the prefix does not start with the default OIDC_)
+		 */
+		if ((strstr(cfg->claim_prefix, OIDC_DEFAULT_HEADER_PREFIX)
+				!= cfg->claim_prefix)) {
+			oidc_scrub_request_headers(r, cfg->claim_prefix, NULL);
+		}
+	}
 }
 
 /*
@@ -1261,21 +1285,7 @@ static int oidc_handle_existing_session(request_rec *r, oidc_cfg *cfg,
 	 * we're going to pass the information that we have to the application,
 	 * but first we need to scrub the headers that we're going to use for security reasons
 	 */
-	if (cfg->scrub_request_headers != 0) {
-
-		/* scrub all headers starting with OIDC_ first */
-		oidc_scrub_request_headers(r, OIDC_DEFAULT_HEADER_PREFIX,
-				oidc_cfg_dir_authn_header(r));
-
-		/*
-		 * then see if the claim headers need to be removed on top of that
-		 * (i.e. the prefix does not start with the default OIDC_)
-		 */
-		if ((strstr(cfg->claim_prefix, OIDC_DEFAULT_HEADER_PREFIX)
-				!= cfg->claim_prefix)) {
-			oidc_scrub_request_headers(r, cfg->claim_prefix, NULL);
-		}
-	}
+	oidc_scrub_headers(r);
 
 	/* set the user authentication HTTP header if set and required */
 	if ((r->user != NULL) && (authn_header != NULL))
@@ -1303,18 +1313,18 @@ static int oidc_handle_existing_session(request_rec *r, oidc_cfg *cfg,
 				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
 	}
 
-	if (cfg->session_type != OIDC_SESSION_TYPE_CLIENT_COOKIE) {
-		if ((cfg->pass_idtoken_as & OIDC_PASS_IDTOKEN_AS_SERIALIZED)) {
+	if ((cfg->pass_idtoken_as & OIDC_PASS_IDTOKEN_AS_SERIALIZED)) {
+		if (cfg->session_type != OIDC_SESSION_TYPE_CLIENT_COOKIE) {
 			const char *s_id_token = NULL;
 			/* get the compact serialized JWT from the session */
 			oidc_session_get(r, session, OIDC_IDTOKEN_SESSION_KEY, &s_id_token);
 			/* pass the compact serialized JWT to the app in a header or environment variable */
 			oidc_util_set_app_info(r, "id_token", s_id_token,
 					OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
+		} else {
+			oidc_error(r,
+					"session type \"client-cookie\" does not allow storing/passing the id_token; use \"OIDCSessionType server-cache\" for that");
 		}
-	} else {
-		oidc_error(r,
-				"session type \"client-cookie\" does not allow storing/passing the id_token; use \"OIDCSessionType server-cache\" for that");
 	}
 
 	/* set the refresh_token in the app headers/variables, if enabled for this location/directory */
@@ -3002,6 +3012,13 @@ static int oidc_check_userid_openidc(request_rec *r, oidc_cfg *c) {
 			return HTTP_UNAUTHORIZED;
 		case OIDC_UNAUTH_PASS:
 			r->user = "";
+
+			/*
+			 * we're not going to pass information about an authenticated user to the application,
+			 * but we do need to scrub the headers that mod_auth_openidc would set for security reasons
+			 */
+			oidc_scrub_headers(r);
+
 			return OK;
 		case OIDC_UNAUTH_AUTHENTICATE:
 			/* if this is a Javascript path we won't redirect the user and create a state cookie */
