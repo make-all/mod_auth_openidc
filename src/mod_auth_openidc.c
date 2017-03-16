@@ -132,7 +132,7 @@ static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix,
 /*
  * scrub all mod_auth_openidc related headers
  */
-static void oidc_scrub_headers(request_rec *r) {
+void oidc_scrub_headers(request_rec *r) {
 	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 
@@ -747,6 +747,13 @@ static apr_byte_t oidc_restore_proto_state(request_rec *r, oidc_cfg *c,
 	/* check that the timestamp is not beyond the valid interval */
 	if (now > json_integer_value(v) + c->state_timeout) {
 		oidc_error(r, "state has expired");
+		oidc_util_html_send_error(r, c->error_template,
+				"Invalid Authentication Response",
+				apr_psprintf(r->pool,
+						"This is due to a timeout; please restart your authentication session by re-entering the URL/bookmark you originally wanted to access: %s",
+						json_string_value(
+								json_object_get(*proto_state, "original_url"))),
+				DONE);
 		json_decref(*proto_state);
 		return FALSE;
 	}
@@ -890,11 +897,53 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 /*
  * log message about max session duration
  */
-static void oidc_log_session_expires(request_rec *r, apr_time_t session_expires) {
+static void oidc_log_session_expires(request_rec *r, const char *msg,
+		apr_time_t session_expires) {
 	char buf[APR_RFC822_DATE_LEN + 1];
 	apr_rfc822_date(buf, session_expires);
-	oidc_debug(r, "session expires %s (in %" APR_TIME_T_FMT " secs from now)",
-			buf, apr_time_sec(session_expires - apr_time_now()));
+	oidc_debug(r, "%s: %s (in %" APR_TIME_T_FMT " secs from now)", msg, buf,
+			apr_time_sec(session_expires - apr_time_now()));
+}
+
+/*
+ * find out which action we need to take when encountering an unauthenticated request
+ */
+static int oidc_handle_unauthenticated_user(request_rec *r, oidc_cfg *c) {
+
+	/* see if we've configured OIDCUnAuthAction for this path */
+	switch (oidc_dir_cfg_unauth_action(r)) {
+	case OIDC_UNAUTH_RETURN410:
+		return HTTP_GONE;
+	case OIDC_UNAUTH_RETURN401:
+		return HTTP_UNAUTHORIZED;
+	case OIDC_UNAUTH_PASS:
+		r->user = "";
+
+		/*
+		 * we're not going to pass information about an authenticated user to the application,
+		 * but we do need to scrub the headers that mod_auth_openidc would set for security reasons
+		 */
+		oidc_scrub_headers(r);
+
+		return OK;
+
+	case OIDC_UNAUTH_AUTHENTICATE:
+
+		/*
+		 * exception handling: if this looks like a XMLHttpRequest call we
+		 * won't redirect the user and thus avoid creating a state cookie
+		 * for a non-browser (= Javascript) call that will never return from the OP
+		 */
+		if ((apr_table_get(r->headers_in, "X-Requested-With") != NULL) && (apr_strnatcasecmp(apr_table_get(r->headers_in, "X-Requested-With"), "XMLHttpRequest") == 0))
+			return HTTP_UNAUTHORIZED;
+	}
+
+	/*
+	 * else: no session (regardless of whether it is main or sub-request),
+	 * and we need to authenticate the user
+	 */
+	return oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
+			NULL, NULL, NULL);
 }
 
 /*
@@ -917,13 +966,11 @@ static int oidc_check_max_session_duration(request_rec *r, oidc_cfg *cfg,
 		oidc_warn(r, "maximum session duration exceeded for user: %s",
 				session->remote_user);
 		oidc_session_kill(r, session);
-		return oidc_authenticate_user(r, cfg, NULL, oidc_get_current_url(r),
-				NULL,
-				NULL, NULL, NULL);
+		return oidc_handle_unauthenticated_user(r, cfg);
 	}
 
 	/* log message about max session duration */
-	oidc_log_session_expires(r, session_expires);
+	oidc_log_session_expires(r, "session max lifetime", session_expires);
 
 	return OK;
 }
@@ -1256,6 +1303,77 @@ static void oidc_copy_tokens_to_request_state(request_rec *r,
 }
 
 /*
+ * pass refresh_token, access_token and access_token_expires as headers/environment variables to the application
+ */
+static apr_byte_t oidc_session_pass_tokens_and_save(request_rec *r,
+		oidc_cfg *cfg, oidc_session_t *session, apr_byte_t needs_save) {
+
+	int pass_headers = oidc_cfg_dir_pass_info_in_headers(r);
+	int pass_envvars = oidc_cfg_dir_pass_info_in_envvars(r);
+
+	/* set the refresh_token in the app headers/variables, if enabled for this location/directory */
+	const char *refresh_token = NULL;
+	oidc_session_get(r, session, OIDC_REFRESHTOKEN_SESSION_KEY, &refresh_token);
+	if ((oidc_cfg_dir_pass_refresh_token(r) != 0) && (refresh_token != NULL)) {
+		/* pass it to the app in a header or environment variable */
+		oidc_util_set_app_info(r, "refresh_token", refresh_token,
+				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
+	}
+
+	/* set the access_token in the app headers/variables */
+	const char *access_token = NULL;
+	oidc_session_get(r, session, OIDC_ACCESSTOKEN_SESSION_KEY, &access_token);
+	if (access_token != NULL) {
+		/* pass it to the app in a header or environment variable */
+		oidc_util_set_app_info(r, "access_token", access_token,
+				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
+	}
+
+	/* set the expiry timestamp in the app headers/variables */
+	const char *access_token_expires = NULL;
+	oidc_session_get(r, session, OIDC_ACCESSTOKEN_EXPIRES_SESSION_KEY,
+			&access_token_expires);
+	if (access_token_expires != NULL) {
+		/* pass it to the app in a header or environment variable */
+		oidc_util_set_app_info(r, "access_token_expires", access_token_expires,
+				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
+	}
+
+	/*
+	 * reset the session inactivity timer
+	 * but only do this once per 10% of the inactivity timeout interval (with a max to 60 seconds)
+	 * for performance reasons
+	 *
+	 * now there's a small chance that the session ends 10% (or a minute) earlier than configured/expected
+	 * cq. when there's a request after a recent save (so no update) and then no activity happens until
+	 * a request comes in just before the session should expire
+	 * ("recent" and "just before" refer to 10%-with-a-max-of-60-seconds of the inactivity interval after
+	 * the start/last-update and before the expiry of the session respectively)
+	 *
+	 * this is be deemed acceptable here because of performance gain
+	 */
+	apr_time_t interval = apr_time_from_sec(cfg->session_inactivity_timeout);
+	apr_time_t now = apr_time_now();
+	apr_time_t slack = interval / 10;
+	if (slack > apr_time_from_sec(60))
+		slack = apr_time_from_sec(60);
+	if (session->expiry - now < interval - slack) {
+		session->expiry = now + interval;
+		needs_save = TRUE;
+	}
+
+	/* log message about session expiry */
+	oidc_log_session_expires(r, "session inactivity timeout", session->expiry);
+
+	/* check if something was updated in the session and we need to save it again */
+	if (needs_save)
+		if (oidc_session_save(r, session) == FALSE)
+			return FALSE;
+
+	return TRUE;
+}
+
+/*
  * handle the case where we have identified an existing authentication session for a user
  */
 static int oidc_handle_existing_session(request_rec *r, oidc_cfg *cfg,
@@ -1327,61 +1445,9 @@ static int oidc_handle_existing_session(request_rec *r, oidc_cfg *cfg,
 		}
 	}
 
-	/* set the refresh_token in the app headers/variables, if enabled for this location/directory */
-	const char *refresh_token = NULL;
-	oidc_session_get(r, session, OIDC_REFRESHTOKEN_SESSION_KEY, &refresh_token);
-	if ((oidc_cfg_dir_pass_refresh_token(r) != 0) && (refresh_token != NULL)) {
-		/* pass it to the app in a header or environment variable */
-		oidc_util_set_app_info(r, "refresh_token", refresh_token,
-				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
-	}
-
-	/* set the access_token in the app headers/variables */
-	const char *access_token = NULL;
-	oidc_session_get(r, session, OIDC_ACCESSTOKEN_SESSION_KEY, &access_token);
-	if (access_token != NULL) {
-		/* pass it to the app in a header or environment variable */
-		oidc_util_set_app_info(r, "access_token", access_token,
-				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
-	}
-
-	/* set the expiry timestamp in the app headers/variables */
-	const char *access_token_expires = NULL;
-	oidc_session_get(r, session, OIDC_ACCESSTOKEN_EXPIRES_SESSION_KEY,
-			&access_token_expires);
-	if (access_token_expires != NULL) {
-		/* pass it to the app in a header or environment variable */
-		oidc_util_set_app_info(r, "access_token_expires", access_token_expires,
-				OIDC_DEFAULT_HEADER_PREFIX, pass_headers, pass_envvars);
-	}
-
-	/*
-	 * reset the session inactivity timer
-	 * but only do this once per 10% of the inactivity timeout interval (with a max to 60 seconds)
-	 * for performance reasons
-	 *
-	 * now there's a small chance that the session ends 10% (or a minute) earlier than configured/expected
-	 * cq. when there's a request after a recent save (so no update) and then no activity happens until
-	 * a request comes in just before the session should expire
-	 * ("recent" and "just before" refer to 10%-with-a-max-of-60-seconds of the inactivity interval after
-	 * the start/last-update and before the expiry of the session respectively)
-	 *
-	 * this is be deemed acceptable here because of performance gain
-	 */
-	apr_time_t interval = apr_time_from_sec(cfg->session_inactivity_timeout);
-	apr_time_t now = apr_time_now();
-	apr_time_t slack = interval / 10;
-	if (slack > apr_time_from_sec(60))
-		slack = apr_time_from_sec(60);
-	if (session->expiry - now < interval - slack) {
-		session->expiry = now + interval;
-		needs_save = TRUE;
-	}
-
-	/* check if something was updated in the session and we need to save it again */
-	if (needs_save)
-		if (oidc_session_save(r, session) == FALSE)
-			return HTTP_INTERNAL_SERVER_ERROR;
+	/* pass the at, rt and at expiry to the application, possibly update the session expiry and save the session */
+	if (oidc_session_pass_tokens_and_save(r, cfg, session, needs_save) == FALSE)
+		return HTTP_INTERNAL_SERVER_ERROR;
 
 	/* return "user authenticated" status */
 	return OK;
@@ -1570,10 +1636,13 @@ static apr_byte_t oidc_save_in_session(request_rec *r, oidc_cfg *c,
 				"session management enabled: stored session_state (%s), check_session_iframe (%s) and client_id (%s) in the session",
 				session_state, provider->check_session_iframe,
 				provider->client_id);
-	} else {
+	} else if (provider->check_session_iframe == NULL) {
 		oidc_debug(r,
-				"session management disabled: session_state (%s) and/or check_session_iframe (%s) is not provided",
-				session_state, provider->check_session_iframe);
+				"session management disabled: \"check_session_iframe\" is not set in provider configuration");
+	} else {
+		oidc_warn(r,
+				"session management disabled: no \"session_state\" value is provided in the authentication response even though \"check_session_iframe\" (%s) is set in the provider configuration",
+				provider->check_session_iframe);
 	}
 
 	if (provider->end_session_endpoint != NULL)
@@ -1609,7 +1678,7 @@ static apr_byte_t oidc_save_in_session(request_rec *r, oidc_cfg *c,
 			apr_psprintf(r->pool, "%" APR_TIME_T_FMT, session_expires));
 
 	/* log message about max session duration */
-	oidc_log_session_expires(r, session_expires);
+	oidc_log_session_expires(r, "session max lifetime", session_expires);
 
 	/* store the domain for which this session is valid */
 	oidc_session_set(r, session, OIDC_COOKIE_DOMAIN_SESSION_KEY,
@@ -2759,8 +2828,8 @@ static int oidc_handle_refresh_token_request(request_rec *r, oidc_cfg *c,
 		goto end;
 	}
 
-	/* store the session */
-	if (oidc_session_save(r, session) == FALSE) {
+	/* pass the tokens to the application and save the session, possibly updating the expiry */
+	if (oidc_session_pass_tokens_and_save(r, c, session, TRUE) == FALSE) {
 		error_code = "session_corruption";
 		goto end;
 	}
@@ -3004,32 +3073,7 @@ static int oidc_check_userid_openidc(request_rec *r, oidc_cfg *c) {
 		 */
 	}
 
-	/* find out which action we need to take when encountering an unauthenticated request */
-	switch (oidc_dir_cfg_unauth_action(r)) {
-		case OIDC_UNAUTH_RETURN410:
-			return HTTP_GONE;
-		case OIDC_UNAUTH_RETURN401:
-			return HTTP_UNAUTHORIZED;
-		case OIDC_UNAUTH_PASS:
-			r->user = "";
-
-			/*
-			 * we're not going to pass information about an authenticated user to the application,
-			 * but we do need to scrub the headers that mod_auth_openidc would set for security reasons
-			 */
-			oidc_scrub_headers(r);
-
-			return OK;
-		case OIDC_UNAUTH_AUTHENTICATE:
-			/* if this is a Javascript path we won't redirect the user and create a state cookie */
-			if (apr_table_get(r->headers_in, "X-Requested-With") != NULL)
-				return HTTP_UNAUTHORIZED;
-			break;
-	}
-
-	/* else: no session (regardless of whether it is main or sub-request), go and authenticate the user */
-	return oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
-			NULL, NULL, NULL);
+	return oidc_handle_unauthenticated_user(r, c);
 }
 
 /*
