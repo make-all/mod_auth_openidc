@@ -1026,6 +1026,7 @@ static char * test_proto_authorization_request(request_rec *r) {
 	provider.response_type = "code";
 	provider.auth_request_params = NULL;
 	provider.request_object = NULL;
+	provider.token_binding_policy = OIDC_TOKEN_BINDING_POLICY_OPTIONAL;
 	const char *redirect_uri = "https://www.example.com/protected/";
 	const char *state = "12345";
 
@@ -1268,6 +1269,7 @@ static request_rec * test_setup(apr_pool_t *pool) {
 			"https://idp.example.com/authorize";
 	cfg->provider.scope = "openid";
 	cfg->provider.client_id = "client_id";
+	cfg->provider.token_binding_policy = OIDC_TOKEN_BINDING_POLICY_OPTIONAL;
 	cfg->redirect_uri = "https://www.example.com/protected/";
 
 	oidc_dir_cfg *d_cfg = oidc_create_dir_config(request->pool, NULL);
