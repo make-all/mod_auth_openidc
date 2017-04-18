@@ -119,8 +119,7 @@ static apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 			|| (accept_token_in == OIDC_OAUTH_ACCEPT_TOKEN_IN_DEFAULT)) {
 
 		/* get the authorization header */
-		const char *auth_line;
-		auth_line = apr_table_get(r->headers_in, "Authorization");
+		const char *auth_line = oidc_util_hdr_in_authorization_get(r);
 		if (auth_line) {
 			oidc_debug(r, "authorization header found");
 
@@ -290,7 +289,6 @@ static apr_byte_t oidc_oauth_get_cached_access_token(request_rec *r,
 		oidc_cfg *c, const char *access_token, json_t **json) {
 	json_t *cache_entry = NULL;
 	const char *s_cache_entry = NULL;
-	json_error_t json_error;
 
 	/* see if we've got the claims for this access_token cached already */
 	c->cache->get(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, access_token,
@@ -300,9 +298,7 @@ static apr_byte_t oidc_oauth_get_cached_access_token(request_rec *r,
 		return FALSE;
 
 	/* json decode the cache entry */
-	cache_entry = json_loads(s_cache_entry, 0, &json_error);
-	if (cache_entry == NULL) {
-		oidc_error(r, "cached JSON was corrupted: %s", json_error.text);
+	if (oidc_util_decode_json_object(r, s_cache_entry, &cache_entry)) {
 		*json = NULL;
 		return FALSE;
 	}
@@ -580,7 +576,7 @@ int oidc_oauth_return_www_authenticate(request_rec *r, const char *error,
 	if (error_description != NULL)
 		hdr = apr_psprintf(r->pool, "%s, error_description=\"%s\"", hdr,
 				error_description);
-	apr_table_setn(r->err_headers_out, "WWW-Authenticate", hdr);
+	oidc_util_hdr_err_out_add(r, OIDC_HTTP_HDR_WWW_AUTHENTICATE, hdr);
 	return HTTP_UNAUTHORIZED;
 }
 
@@ -676,11 +672,8 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 	int pass_headers = oidc_cfg_dir_pass_info_in_headers(r);
 	int pass_envvars = oidc_cfg_dir_pass_info_in_envvars(r);
 
-	if ((r->user != NULL) && (authn_header != NULL)) {
-		oidc_debug(r, "setting authn header (%s) to: %s", authn_header,
-				r->user);
-		apr_table_set(r->headers_in, authn_header, r->user);
-	}
+	if ((r->user != NULL) && (authn_header != NULL))
+		oidc_util_hdr_in_set(r, authn_header, r->user);
 
 	/* set the resolved claims in the HTTP headers for the target application */
 	oidc_util_set_app_infos(r, token, c->claim_prefix, c->claim_delimiter,
