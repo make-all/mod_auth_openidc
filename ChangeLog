@@ -6,6 +6,18 @@ feature
   - session state calls into getters/setters functions
   - header calls into getters/setters functions
   - use constants instead of strings literals
+- add encryption for all cache entries instead of just session data
+- add cookie SameSite flag/policy
+- return HTTP 200 on OPTIONS requests to (unauthenticated) "oauth20" paths
+- add "AuthType auth-openidc" option that allows both "oauth20" and "openid-connect" on the same path
+- add fallback to a by-value session cookie if the primary cache fails with OIDCSessionCacheFallbackToCookie
+- add support for black- and/or white-listing claims with OIDCBlackListedClaims and OIDCWhiteListedClaims
+- fix clearing chunked session cookies on logout; closes #246; thanks @Jharmuth
+- actually remove session state from cache on logout; fix cache delete for encrypted backends i.e. always hash key
+- add token binding support for state & session cookies in conjunction with https://github.com/zmartzone/mod_token_binding
+- add OpenID Connect Token Bound Authentication support (http://openid.net/specs/openid-connect-token-bound-authentication-1_0.html)
+  confirmed against Brian Campbell's PingFederate OP at token-provider-bc.ping-eng.com:9031
+- refactor PKCE support and add OAuth 2.0 Token Binding for Authorization Codes (https://tools.ietf.org/html/draft-jones-oauth-token-binding)
 
 02/20/2017
 - security fix: scrub headers for "AuthType oauth20"

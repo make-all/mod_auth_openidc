@@ -62,7 +62,7 @@
  * validate an access token against the validation endpoint of the Authorization server and gets a response back
  */
 static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
-		const char *token, const char **response) {
+		const char *token, char **response) {
 
 	/* assemble parameters to call the token endpoint for validation */
 	apr_table_t *params = apr_table_make(r->pool, 4);
@@ -109,7 +109,7 @@ static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
 /*
  * get the authorization header that should contain a bearer token
  */
-static apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
+apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 		const char **access_token) {
 
 	/* get the directory specific setting on how the token can be passed in */
@@ -282,14 +282,13 @@ static apr_byte_t oidc_oauth_cache_access_token(request_rec *r, oidc_cfg *c,
 	json_object_set(cache_entry, OIDC_OAUTH_CACHE_KEY_RESPONSE, json);
 	json_object_set_new(cache_entry, OIDC_OAUTH_CACHE_KEY_TIMESTAMP,
 			json_integer(apr_time_sec(apr_time_now())));
-	char *cache_value = json_dumps(cache_entry, 0);
+	char *cache_value = oidc_util_encode_json_object(r, cache_entry,
+			JSON_COMPACT);
 
 	/* set it in the cache so subsequent request don't need to validate the access_token and get the claims anymore */
-	c->cache->set(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, access_token, cache_value,
-			cache_until);
+	oidc_cache_set_access_token(r, access_token, cache_value, cache_until);
 
 	json_decref(cache_entry);
-	free(cache_value);
 
 	return TRUE;
 }
@@ -297,17 +296,16 @@ static apr_byte_t oidc_oauth_cache_access_token(request_rec *r, oidc_cfg *c,
 static apr_byte_t oidc_oauth_get_cached_access_token(request_rec *r,
 		oidc_cfg *c, const char *access_token, json_t **json) {
 	json_t *cache_entry = NULL;
-	const char *s_cache_entry = NULL;
+	char *s_cache_entry = NULL;
 
 	/* see if we've got the claims for this access_token cached already */
-	c->cache->get(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, access_token,
-			&s_cache_entry);
+	oidc_cache_get_access_token(r, access_token, &s_cache_entry);
 
 	if (s_cache_entry == NULL)
 		return FALSE;
 
 	/* json decode the cache entry */
-	if (oidc_util_decode_json_object(r, s_cache_entry, &cache_entry)) {
+	if (oidc_util_decode_json_object(r, s_cache_entry, &cache_entry) == FALSE) {
 		*json = NULL;
 		return FALSE;
 	}
@@ -357,7 +355,7 @@ static apr_byte_t oidc_oauth_resolve_access_token(request_rec *r, oidc_cfg *c,
 
 	if (result == NULL) {
 
-		const char *s_json = NULL;
+		char *s_json = NULL;
 
 		/* not cached, go out and validate the access_token against the Authorization server and get the JSON claims back */
 		if (oidc_oauth_validate_access_token(r, c, access_token,
@@ -460,9 +458,8 @@ static apr_byte_t oidc_oauth_resolve_access_token(request_rec *r, oidc_cfg *c,
 
 	}
 
-	char *s_token = json_dumps(*token, 0);
-	*response = apr_pstrdup(r->pool, s_token);
-	free(s_token);
+	/* stringify the response */
+	*response = oidc_util_encode_json_object(r, *token, JSON_COMPACT);
 
 	return TRUE;
 }
@@ -634,9 +631,14 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 
 	/* get the bearer access token from the Authorization header */
 	const char *access_token = NULL;
-	if (oidc_oauth_get_bearer_token(r, &access_token) == FALSE)
+	if (oidc_oauth_get_bearer_token(r, &access_token) == FALSE) {
+		if (r->method_number == M_OPTIONS) {
+			r->user = "";
+			return OK;
+		}
 		return oidc_oauth_return_www_authenticate(r, "invalid_request",
 				"No bearer token found in the request");
+	}
 
 	/* validate the obtained access token against the OAuth AS validation endpoint */
 	json_t *token = NULL;
@@ -672,6 +674,7 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 	if (oidc_oauth_set_remote_user(r, c, token) == FALSE) {
 		oidc_error(r,
 				"remote user could not be set, aborting with HTTP_UNAUTHORIZED");
+		json_decref(token);
 		return oidc_oauth_return_www_authenticate(r, "invalid_token",
 				"Could not set remote user");
 	}

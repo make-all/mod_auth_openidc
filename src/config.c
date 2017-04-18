@@ -123,6 +123,8 @@
 #define OIDC_DEFAULT_CACHE_FILE_CLEAN_INTERVAL 60
 /* set httponly flag on cookies */
 #define OIDC_DEFAULT_COOKIE_HTTPONLY 1
+/* set Same-Site flag on cookies */
+#define OIDC_DEFAULT_COOKIE_SAME_SITE 0
 /* default cookie path */
 #define OIDC_DEFAULT_COOKIE_PATH "/"
 /* default OAuth 2.0 introspection token parameter name */
@@ -151,6 +153,8 @@
 #define OIDC_DEFAULT_UNAUTH_ACTION OIDC_UNAUTH_AUTHENTICATE
 /* defines for how long provider metadata will be cached */
 #define OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL 0
+/* defines the default token binding policy for a provider */
+#define OIDC_DEFAULT_PROVIDER_TOKEN_BINDING_POLICY OIDC_TOKEN_BINDING_POLICY_OPTIONAL
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -358,6 +362,23 @@ static const char *oidc_set_response_type(cmd_parms *cmd, void *struct_ptr,
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
+const char *oidc_parse_pkce_type(apr_pool_t *pool, const char *arg,
+		oidc_proto_pkce_t **type) {
+	const char *rv = oidc_valid_pkce_method(pool, arg);
+	if (rv != NULL)
+		return rv;
+
+	if (apr_strnatcmp(arg, OIDC_PKCE_METHOD_PLAIN) == 0) {
+		*type = &oidc_pkce_plain;
+	} else if (apr_strnatcmp(arg, OIDC_PKCE_METHOD_S256) == 0) {
+		*type = &oidc_pkce_s256;
+	} else if (apr_strnatcmp(arg, OIDC_PKCE_METHOD_REFERRED_TB) == 0) {
+		*type = &oidc_pkce_referred_tb;
+	}
+
+	return NULL;
+}
+
 /*
  * define the PCKE method to use
  */
@@ -365,10 +386,7 @@ static const char *oidc_set_pkce_method(cmd_parms *cmd, void *ptr,
 		const char *arg) {
 	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
 			cmd->server->module_config, &auth_openidc_module);
-
-	const char *rv = oidc_valid_pkce_method(cmd->pool, arg);
-	if (rv == NULL)
-		rv = ap_set_string_slot(cmd, cfg, arg);
+	const char *rv = oidc_parse_pkce_type(cmd->pool, arg, &cfg->provider.pkce);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
@@ -737,6 +755,32 @@ static const char * oidc_set_info_hook_data(cmd_parms *cmd, void *m,
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
+static const char * oidc_set_filtered_claims(cmd_parms *cmd, void *m,
+		const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+	int offset = (int) (long) cmd->info;
+	apr_hash_t **list =
+			(apr_hash_t **) ((char *) cfg + offset);
+	if (*list == NULL)
+		*list = apr_hash_make(cmd->pool);
+	apr_hash_set(*list, arg, APR_HASH_KEY_STRING, arg);
+	return NULL;
+}
+
+/*
+ * set the token binding policy
+ */
+static const char *oidc_set_token_binding_policy(cmd_parms *cmd,
+		void *struct_ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+	const char *rv = oidc_parse_token_binding_policy(cmd->pool, arg,
+			&cfg->provider.token_binding_policy);
+	return OIDC_CONFIG_DIR_RV(cmd, rv);
+}
+
+
 /*
  * create a new server config record with defaults
  */
@@ -779,7 +823,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->provider.idtoken_iat_slack = OIDC_DEFAULT_IDTOKEN_IAT_SLACK;
 	c->provider.session_max_duration = OIDC_DEFAULT_SESSION_MAX_DURATION;
 	c->provider.auth_request_params = NULL;
-	c->provider.pkce_method = NULL;
+	c->provider.pkce = NULL;
 
 	c->provider.client_jwks_uri = NULL;
 	c->provider.id_token_signed_response_alg = NULL;
@@ -820,6 +864,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 
 	c->cache = &oidc_cache_shm;
 	c->cache_cfg = NULL;
+	c->cache_encrypt = OIDC_CONFIG_POS_INT_UNSET;
 
 	c->cache_file_dir = NULL;
 	c->cache_file_clean_interval = OIDC_DEFAULT_CACHE_FILE_CLEAN_INTERVAL;
@@ -833,6 +878,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 
 	c->metadata_dir = NULL;
 	c->session_type = OIDC_DEFAULT_SESSION_TYPE;
+	c->session_cache_fallback_to_cookie = OIDC_CONFIG_POS_INT_UNSET;
 	c->persistent_session_cookie = 0;
 	c->session_cookie_chunk_size =
 			OIDC_DEFAULT_SESSION_CLIENT_COOKIE_CHUNK_SIZE;
@@ -849,6 +895,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->remote_user_claim.reg_exp = NULL;
 	c->pass_idtoken_as = OIDC_PASS_IDTOKEN_AS_CLAIMS;
 	c->cookie_http_only = OIDC_DEFAULT_COOKIE_HTTPONLY;
+	c->cookie_same_site = OIDC_DEFAULT_COOKIE_SAME_SITE;
 
 	c->outgoing_proxy = NULL;
 	c->crypto_passphrase = NULL;
@@ -863,7 +910,12 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->provider_metadata_refresh_interval =
 			OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL;
 
+	c->provider.token_binding_policy =
+			OIDC_DEFAULT_PROVIDER_TOKEN_BINDING_POLICY;
+
 	c->info_hook_data = NULL;
+	c->black_listed_claims = NULL;
+	c->white_listed_claims = NULL;
 
 	return c;
 }
@@ -999,9 +1051,9 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->provider.auth_request_params != NULL ?
 					add->provider.auth_request_params :
 					base->provider.auth_request_params;
-	c->provider.pkce_method =
-			add->provider.pkce_method != NULL ?
-					add->provider.pkce_method : base->provider.pkce_method;
+	c->provider.pkce =
+			add->provider.pkce != NULL ?
+					add->provider.pkce : base->provider.pkce;
 
 	c->provider.client_jwks_uri =
 			add->provider.client_jwks_uri != NULL ?
@@ -1142,6 +1194,11 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	} else {
 		c->cache = base->cache;
 	}
+
+	c->cache_encrypt =
+			add->cache_encrypt != OIDC_CONFIG_POS_INT_UNSET ?
+					add->cache_encrypt : base->cache_encrypt;
+
 	c->cache_cfg = NULL;
 
 	c->cache_file_dir =
@@ -1179,6 +1236,10 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->session_type =
 			add->session_type != OIDC_DEFAULT_SESSION_TYPE ?
 					add->session_type : base->session_type;
+	c->session_cache_fallback_to_cookie =
+			add->session_cache_fallback_to_cookie != OIDC_CONFIG_POS_INT_UNSET ?
+					add->session_cache_fallback_to_cookie :
+					base->session_cache_fallback_to_cookie;
 	c->persistent_session_cookie =
 			add->persistent_session_cookie != 0 ?
 					add->persistent_session_cookie :
@@ -1213,6 +1274,9 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->cookie_http_only =
 			add->cookie_http_only != OIDC_DEFAULT_COOKIE_HTTPONLY ?
 					add->cookie_http_only : base->cookie_http_only;
+	c->cookie_same_site =
+			add->cookie_same_site != OIDC_DEFAULT_COOKIE_SAME_SITE ?
+					add->cookie_same_site : base->cookie_same_site;
 
 	c->outgoing_proxy =
 			add->outgoing_proxy != NULL ?
@@ -1246,11 +1310,39 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 					add->provider_metadata_refresh_interval :
 					base->provider_metadata_refresh_interval;
 
+	c->provider.token_binding_policy =
+			add->provider.token_binding_policy
+			!= OIDC_DEFAULT_PROVIDER_TOKEN_BINDING_POLICY ?
+					add->provider.token_binding_policy :
+					base->provider.token_binding_policy;
+
 	c->info_hook_data =
 			add->info_hook_data != NULL ?
 					add->info_hook_data : base->info_hook_data;
+	c->black_listed_claims =
+			add->black_listed_claims != NULL ?
+					add->black_listed_claims : base->black_listed_claims;
+	c->white_listed_claims =
+			add->white_listed_claims != NULL ?
+					add->white_listed_claims : base->white_listed_claims;
 
 	return c;
+}
+
+int oidc_cfg_cache_encrypt(request_rec *r) {
+	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+	if (cfg->cache_encrypt == OIDC_CONFIG_POS_INT_UNSET)
+		return cfg->cache->encrypt_by_default;
+	return cfg->cache_encrypt;
+}
+
+int oidc_cfg_session_cache_fallback_to_cookie(request_rec *r) {
+	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+	if (cfg->session_cache_fallback_to_cookie == OIDC_CONFIG_POS_INT_UNSET)
+		return 0;
+	return cfg->session_cache_fallback_to_cookie;
 }
 
 /*
@@ -1773,10 +1865,17 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 }
 
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
-static const authz_provider authz_oidc_provider = {
-		&oidc_authz_checker,
+static const authz_provider oidc_authz_claim_provider = {
+		&oidc_authz_checker_claim,
 		NULL,
 };
+
+#ifdef USE_LIBJQ
+static const authz_provider oidc_authz_claims_expr_provider = {
+		&oidc_authz_checker_claims_expr,
+		NULL,
+};
+#endif
 #endif
 
 /*
@@ -1818,13 +1917,19 @@ static int oidc_auth_fixups(request_rec *r) {
 void oidc_register_hooks(apr_pool_t *pool) {
 	ap_hook_post_config(oidc_post_config, NULL, NULL, APR_HOOK_LAST);
 	ap_hook_child_init(oidc_child_init, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_handler(oidc_content_handler, NULL, NULL, APR_HOOK_MIDDLE);
+	ap_hook_handler(oidc_content_handler, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_fixups(oidc_auth_fixups, NULL, NULL, APR_HOOK_MIDDLE);
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	ap_hook_check_authn(oidc_check_user_id, NULL, NULL, APR_HOOK_MIDDLE,
 			AP_AUTH_INTERNAL_PER_CONF);
-	ap_register_auth_provider(pool, AUTHZ_PROVIDER_GROUP, OIDC_REQUIRE_NAME,
-			"0", &authz_oidc_provider, AP_AUTH_INTERNAL_PER_CONF);
+	ap_register_auth_provider(pool, AUTHZ_PROVIDER_GROUP,
+			OIDC_REQUIRE_CLAIM_NAME, "0", &oidc_authz_claim_provider,
+			AP_AUTH_INTERNAL_PER_CONF);
+#ifdef USE_LIBJQ			
+	ap_register_auth_provider(pool, AUTHZ_PROVIDER_GROUP,
+			OIDC_REQUIRE_CLAIMS_EXPR_NAME, "0",
+			&oidc_authz_claims_expr_provider, AP_AUTH_INTERNAL_PER_CONF);
+#endif
 #else
 	static const char * const authzSucc[] = {"mod_authz_user.c", NULL};
 	ap_hook_check_user_id(oidc_check_user_id, NULL, NULL, APR_HOOK_MIDDLE);
@@ -1951,6 +2056,11 @@ const command_rec oidc_config_cmds[] = {
 				(void *)APR_OFFSETOF(oidc_cfg, provider.userinfo_token_method),
 				RSRC_CONF,
 				"The method that is used to present the access token to the userinfo endpoint; must be one of [authz_header|post_param]"),
+		AP_INIT_TAKE1("OIDCTokenBindingPolicy",
+				oidc_set_token_binding_policy,
+				(void *)APR_OFFSETOF(oidc_cfg, provider.token_binding_policy),
+				RSRC_CONF,
+				"The token binding policy used with the provider; must be one of [disabled|optional|required|enforced]"),
 
 		AP_INIT_TAKE1("OIDCSSLValidateServer",
 				oidc_set_ssl_validate_slot,
@@ -1993,9 +2103,9 @@ const command_rec oidc_config_cmds[] = {
 				"Extra parameters that need to be sent in the Authorization Request (must be query-encoded like \"display=popup&prompt=consent\"."),
 		AP_INIT_TAKE1("OIDCPKCEMethod",
 				oidc_set_pkce_method,
-				(void *)APR_OFFSETOF(oidc_cfg, provider.pkce_method),
+				(void *)APR_OFFSETOF(oidc_cfg, provider.pkce),
 				RSRC_CONF,
-				"The RFC 7636 PCKE mode used; must be one of \"plain\", \"S256\""),
+				"The RFC 7636 PCKE mode used; must be one of \"plain\", \"S256\" or \"referred_tb\""),
 
 		AP_INIT_TAKE1("OIDCClientID", oidc_set_string_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, provider.client_id),
@@ -2036,6 +2146,11 @@ const command_rec oidc_config_cmds[] = {
 				(void *) APR_OFFSETOF(oidc_cfg, cookie_http_only),
 				RSRC_CONF,
 				"Defines whether or not the cookie httponly flag is set on cookies."),
+		AP_INIT_FLAG("OIDCCookieSameSite",
+				oidc_set_flag_slot,
+				(void *) APR_OFFSETOF(oidc_cfg, cookie_same_site),
+				RSRC_CONF,
+				"Defines whether or not the cookie Same-Site flag is set on cookies."),
 		AP_INIT_TAKE1("OIDCOutgoingProxy",
 				oidc_set_string_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, outgoing_proxy),
@@ -2168,6 +2283,11 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_cfg, session_type),
 				RSRC_CONF,
 				"OpenID Connect session storage type (Apache 2.0/2.2 only). Must be one of \"server-cache\" or \"client-cookie\" with an optional suffix \":persistent\"."),
+		AP_INIT_FLAG("OIDCSessionCacheFallbackToCookie",
+				oidc_set_flag_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, session_cache_fallback_to_cookie),
+				RSRC_CONF,
+				"Fallback to client-side cookie session storage when server side cache fails."),
 		AP_INIT_TAKE1("OIDCSessionCookieChunkSize", oidc_set_int_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, session_cookie_chunk_size),
 				RSRC_CONF,
@@ -2181,7 +2301,11 @@ const command_rec oidc_config_cmds[] = {
 		AP_INIT_TAKE1("OIDCCacheType", oidc_set_cache_type,
 				(void*)APR_OFFSETOF(oidc_cfg, cache), RSRC_CONF,
 				"Cache type; must be one of \"file\", \"memcache\" or \"shm\"."),
-
+		AP_INIT_FLAG("OIDCCacheEncrypt",
+				oidc_set_flag_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, cache_encrypt),
+				RSRC_CONF,
+				"Encrypt the data in the cache backend (On or Off)"),
 		AP_INIT_TAKE1("OIDCCacheDir", oidc_set_dir_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, cache_file_dir),
 				RSRC_CONF,
@@ -2303,5 +2427,15 @@ const command_rec oidc_config_cmds[] = {
 				(void *)APR_OFFSETOF(oidc_cfg, info_hook_data),
 				RSRC_CONF,
 				"The data that will be returned from the info hook."),
+		AP_INIT_ITERATE("OIDCBlackListedClaims",
+				oidc_set_filtered_claims,
+				(void *) APR_OFFSETOF(oidc_cfg, black_listed_claims),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"Specify claims that should be removed from the userinfo and/or id_token before storing them in the session."),
+		AP_INIT_ITERATE("OIDCWhiteListedClaims",
+				oidc_set_filtered_claims,
+				(void *) APR_OFFSETOF(oidc_cfg, white_listed_claims),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"Specify claims from the userinfo and/or id_token that should be stored in the session (all other claims will be discarded)."),
 		{ NULL }
 };

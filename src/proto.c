@@ -247,9 +247,8 @@ char *oidc_proto_create_request_uri(request_rec *r,
 			authorization_request);
 
 	/* debug logging */
-	char *s_json = json_dumps(request_object->payload.value.json, 0);
-	oidc_debug(r, "request object: %s", s_json);
-	free(s_json);
+	oidc_debug(r, "request object: %s",
+			oidc_util_encode_json_object(r, request_object->payload.value.json, JSON_COMPACT));
 
 	char *serialized_request_object = NULL;
 	oidc_jose_error_t err;
@@ -389,7 +388,7 @@ char *oidc_proto_create_request_uri(request_rec *r,
 	if (serialized_request_object != NULL) {
 		char *request_ref = NULL;
 		if (oidc_proto_generate_random_string(r, &request_ref, 16) == TRUE) {
-			cfg->cache->set(r, OIDC_CACHE_SECTION_REQUEST_URI, request_ref,
+			oidc_cache_set_request_uri(r, request_ref,
 					serialized_request_object,
 					apr_time_now() + apr_time_from_sec(OIDC_REQUEST_URI_CACHE_DURATION));
 			request_uri = apr_psprintf(r->pool, "%s?%s=%s", resolver_url,
@@ -410,11 +409,11 @@ int oidc_proto_authorization_request(request_rec *r,
 		const char *auth_request_params) {
 
 	/* log some stuff */
-	char *s_value = json_dumps(proto_state, JSON_ENCODE_ANY);
 	oidc_debug(r,
 			"enter, issuer=%s, redirect_uri=%s, state=%s, proto_state=%s, code_challenge=%s",
-			provider->issuer, redirect_uri, state, s_value, code_challenge);
-	free(s_value);
+			provider->issuer, redirect_uri, state,
+			oidc_util_encode_json_object(r, proto_state, JSON_COMPACT),
+			code_challenge);
 
 	/* assemble the full URL as the authorization request to the OP where we want to redirect to */
 	char *authorization_request = apr_psprintf(r->pool, "%s%s",
@@ -467,7 +466,7 @@ int oidc_proto_authorization_request(request_rec *r,
 				authorization_request,
 				OIDC_PROTO_CODE_CHALLENGE,
 				oidc_util_escape_string(r, code_challenge),
-				OIDC_PROTO_CODE_CHALLENGE_METHOD, provider->pkce_method);
+				OIDC_PROTO_CODE_CHALLENGE_METHOD, provider->pkce->method);
 
 	/* add the response_mode if explicitly set */
 	if (json_object_get(proto_state, OIDC_PROTO_STATE_RESPONSE_MODE) != NULL)
@@ -530,6 +529,13 @@ int oidc_proto_authorization_request(request_rec *r,
 			NULL) == TRUE)
 		return DONE;
 
+	/* add a referred token binding request for the provider if enabled */
+	if ((provider->token_binding_policy > OIDC_TOKEN_BINDING_POLICY_DISABLED)
+			&& (apr_table_get(r->subprocess_env, OIDC_TB_CFG_PROVIDED_ENV_VAR)
+					!= NULL))
+		oidc_util_hdr_err_out_add(r,
+				OIDC_HTTP_HDR_INCLUDE_REFERRED_TOKEN_BINDING_ID, "true");
+
 	/* add the redirect location header */
 	oidc_util_hdr_out_location_set(r, authorization_request);
 
@@ -568,43 +574,120 @@ apr_byte_t oidc_proto_generate_nonce(request_rec *r, char **nonce, int len) {
 }
 
 /*
- * generate a random value (code_verifier) to correlate authorization request and token exchange request through browser state
+ * PCKE "plain" proto state
  */
-apr_byte_t oidc_proto_generate_code_verifier(request_rec *r,
-		char **code_verifier, int len) {
-	//*code_verifier = apr_pstrdup(r->pool, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"); return TRUE;
-	return oidc_proto_generate_random_string(r, code_verifier, len);
+static apr_byte_t oidc_proto_pkce_state_plain(request_rec *r, char **state) {
+	return oidc_proto_generate_random_string(r, state,
+			OIDC_PROTO_CODE_VERIFIER_LENGTH);
 }
 
 /*
- * generate the PKCE code challenge for a given code verifier and method
+ * PCKE "plain" code_challenge
  */
-apr_byte_t oidc_proto_generate_code_challenge(request_rec *r,
-		const char *code_verifier, char **code_challenge,
-		const char *challenge_method) {
-
-	oidc_debug(r, "enter: method=%s", challenge_method);
-
-	if (code_verifier != NULL) {
-
-		if (apr_strnatcmp(challenge_method, "plain") == 0) {
-
-			*code_challenge = apr_pstrdup(r->pool, code_verifier);
-
-		} else if (apr_strnatcmp(challenge_method, "S256") == 0) {
-
-			if (oidc_util_hash_string_and_base64url_encode(r, "sha256",
-					code_verifier, code_challenge) == FALSE) {
-				oidc_error(r,
-						"oidc_util_hash_string_and_base64url_encode returned an error for the code verifier");
-				return FALSE;
-			}
-		}
-
-	}
-
+static apr_byte_t oidc_proto_pkce_challenge_plain(request_rec *r,
+		const char *state, char **code_challenge) {
+	*code_challenge = apr_pstrdup(r->pool, state);
 	return TRUE;
 }
+
+/*
+ * PCKE "plain" code_verifier
+ */
+static apr_byte_t oidc_proto_pkce_verifier_plain(request_rec *r,
+		const char *state, char **code_verifier) {
+	*code_verifier = apr_pstrdup(r->pool, state);
+	return TRUE;
+}
+
+/*
+ * PCKE "s256" proto state
+ */
+static apr_byte_t oidc_proto_pkce_state_s256(request_rec *r, char **state) {
+	return oidc_proto_generate_random_string(r, state,
+			OIDC_PROTO_CODE_VERIFIER_LENGTH);
+}
+
+/*
+ * PCKE "s256" code_challenge
+ */
+static apr_byte_t oidc_proto_pkce_challenge_s256(request_rec *r,
+		const char *state, char **code_challenge) {
+	if (oidc_util_hash_string_and_base64url_encode(r, "sha256", state,
+			code_challenge) == FALSE) {
+		oidc_error(r,
+				"oidc_util_hash_string_and_base64url_encode returned an error for the code verifier");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * PCKE "s256" code_verifier
+ */
+static apr_byte_t oidc_proto_pkce_verifier_s256(request_rec *r,
+		const char *state, char **code_verifier) {
+	*code_verifier = apr_pstrdup(r->pool, state);
+	return TRUE;
+}
+
+/*
+ * PCKE "referred_tb" proto state
+ */
+static apr_byte_t oidc_proto_pkce_state_referred_tb(request_rec *r,
+		char **state) {
+	*state = NULL;
+	return TRUE;
+}
+
+/*
+ * PCKE "referred_tb" code_challenge
+ */
+static apr_byte_t oidc_proto_pkce_challenge_referred_tb(request_rec *r,
+		const char *state, char **code_challenge) {
+	// state should be NULL
+	*code_challenge = OIDC_PKCE_METHOD_REFERRED_TB;
+	return TRUE;
+}
+
+/*
+ * PCKE "referred_tb" code_verifier
+ */
+static apr_byte_t oidc_proto_pkce_verifier_referred_tb(request_rec *r,
+		const char *state, char **code_verifier) {
+	*code_verifier = apr_pstrdup(r->pool,
+			apr_table_get(r->subprocess_env, OIDC_TB_CFG_PROVIDED_ENV_VAR));
+	return TRUE;
+}
+
+/*
+ * PKCE plain
+ */
+oidc_proto_pkce_t oidc_pkce_plain = {
+		OIDC_PKCE_METHOD_PLAIN,
+		oidc_proto_pkce_state_plain,
+		oidc_proto_pkce_verifier_plain,
+		oidc_proto_pkce_challenge_plain
+};
+
+/*
+ * PKCE s256
+ */
+oidc_proto_pkce_t oidc_pkce_s256 = {
+		OIDC_PKCE_METHOD_S256,
+		oidc_proto_pkce_state_s256,
+		oidc_proto_pkce_verifier_s256,
+		oidc_proto_pkce_challenge_s256
+};
+
+/*
+ * PKCE referred_tb
+ */
+oidc_proto_pkce_t oidc_pkce_referred_tb = {
+		OIDC_PKCE_METHOD_REFERRED_TB,
+		oidc_proto_pkce_state_referred_tb,
+		oidc_proto_pkce_verifier_referred_tb,
+		oidc_proto_pkce_challenge_referred_tb
+};
 
 /*
  * if a nonce was passed in the authorization request (and stored in the browser state),
@@ -617,8 +700,8 @@ apr_byte_t oidc_proto_validate_nonce(request_rec *r, oidc_cfg *cfg,
 	oidc_jose_error_t err;
 
 	/* see if we have this nonce cached already */
-	const char *replay = NULL;
-	cfg->cache->get(r, OIDC_CACHE_SECTION_NONCE, nonce, &replay);
+	char *replay = NULL;
+	oidc_cache_get_nonce(r, nonce, &replay);
 	if (replay != NULL) {
 		oidc_error(r,
 				"the nonce value (%s) passed in the browser state was found in the cache already; possible replay attack!?",
@@ -652,7 +735,7 @@ apr_byte_t oidc_proto_validate_nonce(request_rec *r, oidc_cfg *cfg,
 			provider->idtoken_iat_slack * 2 + 10);
 
 	/* store it in the cache for the calculated duration */
-	cfg->cache->set(r, OIDC_CACHE_SECTION_NONCE, nonce, nonce,
+	oidc_cache_set_nonce(r, nonce, nonce,
 			apr_time_now() + nonce_cache_duration);
 
 	oidc_debug(r,
@@ -732,6 +815,97 @@ static apr_byte_t oidc_proto_validate_aud_and_azp(request_rec *r, oidc_cfg *cfg,
 	}
 
 	return TRUE;
+}
+
+#define OIDC_CLAIM_CNF     "cnf"
+#define OIDC_CLAIM_CNF_TBH "tbh"
+
+/*
+ * validate the "cnf" claims in the id_token payload
+ */
+static apr_byte_t oidc_proto_validate_cnf(request_rec *r, oidc_cfg *cfg,
+		oidc_provider_t *provider, oidc_jwt_payload_t *id_token_payload) {
+	char *tbh_str = NULL;
+	char *tbh = NULL;
+	int tbh_len = -1;
+	const char *tbp_str = NULL;
+	char *tbp = NULL;
+	int tbp_len = -1;
+	unsigned char *tbp_hash = NULL;
+	unsigned int tbp_hash_len = -1;
+
+	oidc_debug(r, "enter: policy=%s", oidc_token_binding_policy2str(r->pool, provider->token_binding_policy));
+
+	if (provider->token_binding_policy == OIDC_TOKEN_BINDING_POLICY_DISABLED)
+		return TRUE;
+
+	tbp_str = apr_table_get(r->subprocess_env, OIDC_TB_CFG_PROVIDED_ENV_VAR);
+	if (tbp_str == NULL) {
+		oidc_warn(r, "no provided token binding ID environment variable found");
+		goto out_err;
+	}
+
+	tbp_len = oidc_base64url_decode(r->pool, &tbp, tbp_str);
+	if (tbp_len <= 0) {
+		oidc_warn(r,
+				"token binding ID environment variable could not be decoded");
+		return FALSE;
+	}
+
+	if (oidc_jose_hash_bytes(r->pool, "sha256", (const unsigned char *) tbp,
+			tbp_len, &tbp_hash, &tbp_hash_len, NULL) == FALSE) {
+		oidc_warn(r,
+				"hashing provided token binding ID environment variable failed");
+		return FALSE;
+	}
+
+	json_t *cnf = json_object_get(id_token_payload->value.json, OIDC_CLAIM_CNF);
+	if (cnf == NULL) {
+		oidc_debug(r, "no \"cnf\" claim found in id_token");
+		goto out_err;
+	}
+
+	oidc_jose_get_string(r->pool, cnf, OIDC_CLAIM_CNF_TBH, FALSE, &tbh_str,
+			NULL);
+	if (tbh_str == NULL) {
+		oidc_debug(r,
+				" \"cnf\" claim found in id_token but no \"tbh\" claim inside found");
+		goto out_err;
+	}
+
+	tbh_len = oidc_base64url_decode(r->pool, &tbh, tbh_str);
+	if (tbh_len <= 0) {
+		oidc_warn(r, "cnf[\"tbh\"] provided but it could not be decoded");
+		return FALSE;
+	}
+
+	if (tbp_hash_len != tbh_len) {
+		oidc_warn(r,
+				"hash length of provided token binding ID environment variable: %d does not match length of cnf[\"tbh\"]: %d",
+				tbp_hash_len, tbh_len);
+		return FALSE;
+	}
+
+	if (memcmp(tbp_hash, tbh, tbh_len) != 0) {
+		oidc_warn(r,
+				"hash of provided token binding ID environment variable does not match cnf[\"tbh\"]");
+		return FALSE;
+	}
+
+	oidc_debug(r,
+			"hash of provided token binding ID environment variable matches cnf[\"tbh\"]");
+
+	return TRUE;
+
+out_err:
+
+	if (provider->token_binding_policy == OIDC_TOKEN_BINDING_POLICY_OPTIONAL)
+		return TRUE;
+	if (provider->token_binding_policy == OIDC_TOKEN_BINDING_POLICY_ENFORCED)
+		return FALSE;
+
+	// provider->token_binding_policy == OIDC_TOKEN_BINDING_POLICY_REQURIED
+	return (tbp_str == NULL);
 }
 
 /*
@@ -872,6 +1046,10 @@ static apr_byte_t oidc_proto_validate_idtoken(request_rec *r,
 	/* verify the "aud" and "azp" values */
 	if (oidc_proto_validate_aud_and_azp(r, cfg, provider,
 			&jwt->payload) == FALSE)
+		return FALSE;
+
+	/* verify the included token binding ID if provided */
+	if (oidc_proto_validate_cnf(r, cfg, provider, &jwt->payload) == FALSE)
 		return FALSE;
 
 	return TRUE;
@@ -1203,7 +1381,7 @@ static apr_byte_t oidc_proto_token_endpoint_request(request_rec *r,
 		char **id_token, char **access_token, char **token_type,
 		int *expires_in, char **refresh_token) {
 
-	const char *response = NULL;
+	char *response = NULL;
 	const char *basic_auth = NULL;
 
 	oidc_debug(r, "token_endpoint_auth=%s", provider->token_endpoint_auth);
@@ -1418,8 +1596,9 @@ apr_byte_t oidc_proto_refresh_request(request_rec *r, oidc_cfg *cfg,
 			access_token, token_type, expires_in, refresh_token);
 }
 
-apr_byte_t oidc_user_info_response_validate(request_rec *r, oidc_cfg *cfg,
-		oidc_provider_t *provider, const char **response, json_t **claims) {
+static apr_byte_t oidc_user_info_response_validate(request_rec *r,
+		oidc_cfg *cfg, oidc_provider_t *provider, char **response,
+		json_t **claims) {
 
 	oidc_debug(r,
 			"enter: userinfo_signed_response_alg=%s, userinfo_encrypted_response_alg=%s, userinfo_encrypted_response_enc=%s",
@@ -1545,9 +1724,9 @@ static apr_byte_t oidc_proto_resolve_composite_claims(request_rec *r,
 		value = json_object_iter_value(iter);
 		if ((value != NULL) && (json_is_object(value))) {
 			json_t *jwt = json_object_get(value, OIDC_COMPOSITE_CLAIM_JWT);
-			const char *s_json = NULL;
+			char *s_json = NULL;
 			if ((jwt != NULL) && (json_is_string(jwt))) {
-				s_json = json_string_value(jwt);
+				s_json = apr_pstrdup(r->pool, json_string_value(jwt));
 			} else {
 				const char *access_token = json_string_value(
 						json_object_get(value,
@@ -1614,7 +1793,7 @@ static apr_byte_t oidc_proto_resolve_composite_claims(request_rec *r,
  */
 apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg,
 		oidc_provider_t *provider, const char *id_token_sub,
-		const char *access_token, const char **response) {
+		const char *access_token, char **response) {
 
 	oidc_debug(r, "enter, endpoint=%s, access_token=%s",
 			provider->userinfo_endpoint_url, access_token);
@@ -1646,11 +1825,9 @@ apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg,
 			&claims) == FALSE)
 		return FALSE;
 
-	if (oidc_proto_resolve_composite_claims(r, cfg, claims) == TRUE) {
-		char *s_json = json_dumps(claims, JSON_PRESERVE_ORDER | JSON_COMPACT);
-		*response = apr_pstrdup(r->pool, s_json);
-		free(s_json);
-	}
+	if (oidc_proto_resolve_composite_claims(r, cfg, claims) == TRUE)
+		*response = oidc_util_encode_json_object(r, claims,
+				JSON_PRESERVE_ORDER | JSON_COMPACT);
 
 	char *user_info_sub = NULL;
 	oidc_jose_get_string(r->pool, claims, OIDC_CLAIM_SUB, FALSE, &user_info_sub,
@@ -1687,7 +1864,7 @@ static apr_byte_t oidc_proto_webfinger_discovery(request_rec *r, oidc_cfg *cfg,
 	apr_table_addn(params, "resource", resource);
 	apr_table_addn(params, "rel", "http://openid.net/specs/connect/1.0/issuer");
 
-	const char *response = NULL;
+	char *response = NULL;
 	if (oidc_util_http_get(r, url, params, NULL, NULL,
 			cfg->provider.ssl_validate_server, &response,
 			cfg->http_timeout_short, cfg->outgoing_proxy,
@@ -2236,12 +2413,17 @@ static apr_byte_t oidc_proto_resolve_code_and_validate_response(request_rec *r,
 	char *token_type = NULL;
 	int expires_in = -1;
 	char *refresh_token = NULL;
+	const char *pkce_state = NULL;
+	char *code_verifier = NULL;
 
-	const char *code_verifier =
-			json_object_get(proto_state, OIDC_PROTO_CODE_VERIFIER) ?
-					json_string_value(json_object_get(proto_state,
-							OIDC_PROTO_CODE_VERIFIER)) :
-							NULL;
+	if (provider->pkce != NULL) {
+		pkce_state =
+				json_object_get(proto_state, OIDC_PROTO_STATE_PKCE) ?
+						json_string_value(json_object_get(proto_state,
+								OIDC_PROTO_STATE_PKCE)) :
+								NULL;
+		provider->pkce->verifier(r, pkce_state, &code_verifier);
+	}
 
 	const char *state =
 			json_object_get(proto_state, OIDC_PROTO_STATE) ?

@@ -470,7 +470,7 @@ static apr_byte_t oidc_metadata_file_write(request_rec *r, const char *path,
  * register the client with the OP using Dynamic Client Registration
  */
 static apr_byte_t oidc_metadata_client_register(request_rec *r, oidc_cfg *cfg,
-		oidc_provider_t *provider, json_t **j_client, const char **response) {
+		oidc_provider_t *provider, json_t **j_client, char **response) {
 
 	/* assemble the JSON registration request */
 	json_t *data = json_object();
@@ -583,7 +583,7 @@ static apr_byte_t oidc_metadata_client_register(request_rec *r, oidc_cfg *cfg,
 static apr_byte_t oidc_metadata_jwks_retrieve_and_cache(request_rec *r,
 		oidc_cfg *cfg, const oidc_jwks_uri_t *jwks_uri, json_t **j_jwks) {
 
-	const char *response = NULL;
+	char *response = NULL;
 
 	/* no valid provider metadata, get it at the specified URL with the specified parameters */
 	if (oidc_util_http_get(r, jwks_uri->url, NULL, NULL,
@@ -603,8 +603,8 @@ static apr_byte_t oidc_metadata_jwks_retrieve_and_cache(request_rec *r,
 		return FALSE;
 
 	/* store the JWKs in the cache */
-	cfg->cache->set(r, OIDC_CACHE_SECTION_JWKS,
-			oidc_metadata_jwks_cache_key(r, jwks_uri->url), response,
+	oidc_cache_set_jwks(r, oidc_metadata_jwks_cache_key(r, jwks_uri->url),
+			response,
 			apr_time_now() + apr_time_from_sec(jwks_uri->refresh_interval));
 
 	return TRUE;
@@ -629,9 +629,9 @@ apr_byte_t oidc_metadata_jwks_get(request_rec *r, oidc_cfg *cfg,
 	}
 
 	/* see if the JWKs is cached */
-	const char *value = NULL;
-	cfg->cache->get(r, OIDC_CACHE_SECTION_JWKS,
-			oidc_metadata_jwks_cache_key(r, jwks_uri->url), &value);
+	char *value = NULL;
+	oidc_cache_get_jwks(r, oidc_metadata_jwks_cache_key(r, jwks_uri->url),
+			&value);
 
 	if (value == NULL) {
 		/* it is non-existing or expired: do a forced refresh */
@@ -653,7 +653,7 @@ apr_byte_t oidc_metadata_jwks_get(request_rec *r, oidc_cfg *cfg,
  */
 apr_byte_t oidc_metadata_provider_retrieve(request_rec *r, oidc_cfg *cfg,
 		const char *issuer, const char *url, json_t **j_metadata,
-		const char **response) {
+		char **response) {
 
 	/* get provider metadata from the specified URL with the specified parameters */
 	if (oidc_util_http_get(r, url, NULL, NULL, NULL,
@@ -685,7 +685,7 @@ static apr_byte_t oidc_metadata_provider_get(request_rec *r, oidc_cfg *cfg,
 		const char *issuer, json_t **j_provider, apr_byte_t allow_discovery) {
 
 	/* holds the response data/string/JSON from the OP */
-	const char *response = NULL;
+	char *response = NULL;
 
 	/* get the full file path to the provider metadata for this issuer */
 	const char *provider_path = oidc_metadata_provider_file_path(r, issuer);
@@ -817,7 +817,7 @@ static apr_byte_t oidc_metadata_client_get(request_rec *r, oidc_cfg *cfg,
 	}
 
 	/* try and get client metadata by registering the client at the registration endpoint */
-	const char *response = NULL;
+	char *response = NULL;
 	if (oidc_metadata_client_register(r, cfg, provider, j_client,
 			&response) == FALSE)
 		return FALSE;
@@ -1107,9 +1107,12 @@ apr_byte_t oidc_metadata_conf_parse(request_rec *r, oidc_cfg *cfg,
 			cfg->provider.response_mode);
 
 	/* get the PKCE method to use */
+	char *pkce_method = NULL;
 	oidc_metadata_get_valid_string(r, j_conf, "pkce_method",
-			oidc_valid_pkce_method, &provider->pkce_method,
-			cfg->provider.pkce_method);
+			oidc_valid_pkce_method, &pkce_method,
+			cfg->provider.pkce ? cfg->provider.pkce->method : NULL);
+	if (pkce_method != NULL)
+		oidc_parse_pkce_type(r->pool, pkce_method, &provider->pkce);
 
 	/* get the client name */
 	oidc_json_object_get_string(r->pool, j_conf, "client_name",
@@ -1167,6 +1170,17 @@ apr_byte_t oidc_metadata_conf_parse(request_rec *r, oidc_cfg *cfg,
 				&provider->userinfo_token_method);
 	else
 		provider->userinfo_token_method = OIDC_USER_INFO_TOKEN_METHOD_HEADER;
+
+	/* see if we've got a custom token binding policy */
+	char *policy = NULL;
+	oidc_metadata_get_valid_string(r, j_conf, "token_binding_policy",
+			oidc_valid_token_binding_policy, &policy,
+			NULL);
+	if (method != NULL)
+		oidc_parse_token_binding_policy(r->pool, policy,
+				&provider->token_binding_policy);
+	else
+		provider->token_binding_policy = cfg->provider.token_binding_policy;
 
 	return TRUE;
 }

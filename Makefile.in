@@ -3,7 +3,7 @@ SRC=src/mod_auth_openidc.c \
 	src/cache/file.c \
 	src/cache/memcache.c \
 	src/cache/shm.c \
-	src/cache/lock.c \
+	src/cache/common.c \
 	src/oauth.c \
 	src/proto.c \
 	src/config.c \
@@ -19,6 +19,11 @@ SRC += \
 	src/cache/redis.c	
 REDIS_CFLAGS=-DUSE_LIBHIREDIS @HIREDIS_CFLAGS@
 REDIS_LIBS=@HIREDIS_LIBS@
+endif
+
+ifeq (@HAVE_LIBJQ@, 1)
+JQ_CFLAGS=-DUSE_LIBJQ @JQ_CFLAGS@
+JQ_LIBS=@JQ_LIBS@
 endif
 
 HDRS = \
@@ -48,8 +53,8 @@ DISTFILES=$(SRC) \
 
 all: src/mod_auth_openidc.la
 
-CFLAGS=@OPENSSL_CFLAGS@ @CURL_CFLAGS@ @JANSSON_CFLAGS@ @CJOSE_CFLAGS@ @PCRE_CFLAGS@ $(REDIS_CFLAGS)
-LIBS=@OPENSSL_LIBS@ @CURL_LIBS@ @JANSSON_LIBS@ @CJOSE_LIBS@ @PCRE_LIBS@ $(REDIS_LIBS)
+CFLAGS=@OPENSSL_CFLAGS@ @CURL_CFLAGS@ @JANSSON_CFLAGS@ @CJOSE_CFLAGS@ @PCRE_CFLAGS@ $(REDIS_CFLAGS) $(JQ_CFLAGS)
+LIBS=@OPENSSL_LIBS@ @CURL_LIBS@ @JANSSON_LIBS@ @CJOSE_LIBS@ @PCRE_LIBS@ $(REDIS_LIBS) $(JQ_LIBS)
 
 src/mod_auth_openidc.la: $(SRC) $(HDRS)
 	@APXS2@ @APXS2_OPTS@ -Wc,"-DNAMEVER=\"@NAMEVER@\" $(CFLAGS)" -Wl,"$(LIBS)" -Wc,-Wall -Wc,-g -c $(SRC)
