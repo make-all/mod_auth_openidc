@@ -863,6 +863,15 @@ apr_byte_t oidc_jwt_encrypt(apr_pool_t *pool, oidc_jwt_t *jwe, oidc_jwk_t *jwk,
 }
 
 /*
+ * check for a version of cjose < 0.5.0 that has a version of
+ * cjose_jws_verify that resources after a verification failure
+ */
+apr_byte_t oidc_jose_version_deprecated(apr_pool_t *pool) {
+	char *version = apr_pstrdup(pool, cjose_version());
+	return (strstr(version, "0.4.") == version);
+}
+
+/*
  * verify the signature on a JWT
  */
 apr_byte_t oidc_jwt_verify(apr_pool_t *pool, oidc_jwt_t *jwt, apr_hash_t *keys,
@@ -881,7 +890,8 @@ apr_byte_t oidc_jwt_verify(apr_pool_t *pool, oidc_jwt_t *jwt, apr_hash_t *keys,
 			if (rc == FALSE) {
 				oidc_jose_error(err, "cjose_jws_verify failed: %s",
 						oidc_cjose_e2s(pool, cjose_err));
-				jwt->cjose_jws = NULL;
+				if (oidc_jose_version_deprecated(pool))
+					jwt->cjose_jws = NULL;
 			}
 		} else {
 			oidc_jose_error(err, "could not find key with kid: %s",
@@ -899,7 +909,8 @@ apr_byte_t oidc_jwt_verify(apr_pool_t *pool, oidc_jwt_t *jwt, apr_hash_t *keys,
 				if (rc == FALSE) {
 					oidc_jose_error(err, "cjose_jws_verify failed: %s",
 							oidc_cjose_e2s(pool, cjose_err));
-					jwt->cjose_jws = NULL;
+					if (oidc_jose_version_deprecated(pool))
+						jwt->cjose_jws = NULL;
 				}
 			}
 			if ((rc == TRUE) || (jwt->cjose_jws == NULL))
@@ -1224,9 +1235,9 @@ static apr_byte_t oidc_jwk_parse_rsa_x5c(apr_pool_t *pool, json_t *json,
 /*
  * parse an X.509 PEM formatted certificate file with an RSA public key to a JWK struct
  */
-apr_byte_t oidc_jwk_parse_rsa_private_key(apr_pool_t *pool,
+apr_byte_t oidc_jwk_parse_rsa_private_key(apr_pool_t *pool,  const char *kid,
 		const char *filename, oidc_jwk_t **jwk, oidc_jose_error_t *err) {
-	return oidc_jwk_parse_rsa_key(pool, TRUE, NULL, filename, jwk, err);
+	return oidc_jwk_parse_rsa_key(pool, TRUE, kid, filename, jwk, err);
 }
 
 /*

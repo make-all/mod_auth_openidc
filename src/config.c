@@ -151,6 +151,8 @@
 #define OIDC_DEFAULT_TOKEN_INTROSPECTION_INTERVAL 0
 /* default action to take on an incoming unauthenticated request */
 #define OIDC_DEFAULT_UNAUTH_ACTION OIDC_UNAUTH_AUTHENTICATE
+/* default action to take on an incoming authorized request */
+#define OIDC_DEFAULT_UNAUTZ_ACTION OIDC_UNAUTZ_RETURN403
 /* defines for how long provider metadata will be cached */
 #define OIDC_DEFAULT_PROVIDER_METADATA_REFRESH_INTERVAL 0
 /* defines the default token binding policy for a provider */
@@ -167,6 +169,7 @@ typedef struct oidc_dir_cfg {
 	char *cookie;
 	char *authn_header;
 	int unauth_action;
+	int unautz_action;
 	apr_array_header_t *pass_cookies;
 	apr_array_header_t *strip_cookies;
 	int pass_info_in_headers;
@@ -176,6 +179,8 @@ typedef struct oidc_dir_cfg {
 	int oauth_token_introspect_interval;
 	int preserve_post;
 	int pass_refresh_token;
+	char *path_auth_request_params;
+	char *path_scope;
 } oidc_dir_cfg;
 
 #define OIDC_CONFIG_DIR_RV(cmd, rv) rv != NULL ? apr_psprintf(cmd->pool, "Invalid value for directive '%s': %s", cmd->directive->directive, rv) : NULL
@@ -240,6 +245,27 @@ static const char *oidc_set_url_slot(cmd_parms *cmd, void *ptr, const char *arg)
 	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
 			cmd->server->module_config, &auth_openidc_module);
 	return oidc_set_url_slot_type(cmd, cfg, arg, NULL);
+}
+
+/*
+ * set a relative or absolute URL value in the server config
+ */
+static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd, void *ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+  if (arg[0] == '/') {
+		// relative uri
+		apr_uri_t uri;
+		if (apr_uri_parse(cmd->pool, arg, &uri) != APR_SUCCESS) {
+			const char *rv = apr_psprintf(cmd->pool, "cannot parse '%s' as relative URI", arg);
+			return OIDC_CONFIG_DIR_RV(cmd, rv);
+		} else {
+			return ap_set_string_slot(cmd, cfg, arg);
+		}
+	} else {
+		// absolute uri
+		return oidc_set_url_slot_type(cmd, cfg, arg, NULL);
+	}
 }
 
 /*
@@ -560,9 +586,16 @@ static const char *oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
 	oidc_jwk_t *jwk = NULL;
 	oidc_jose_error_t err;
 
-	if (oidc_jwk_parse_rsa_private_key(cmd->pool, arg, &jwk, &err) == FALSE) {
+	char *kid = NULL, *fname = NULL;
+	int fname_len;
+	const char *rv = oidc_parse_enc_kid_key_tuple(cmd->pool, arg, &kid, &fname,
+			&fname_len, FALSE);
+	if (rv != NULL)
+		return rv;
+
+	if (oidc_jwk_parse_rsa_private_key(cmd->pool, kid, fname, &jwk, &err) == FALSE) {
 		return apr_psprintf(cmd->pool,
-				"oidc_jwk_parse_rsa_private_key failed for \"%s\": %s", arg,
+				"oidc_jwk_parse_rsa_private_key failed for (kid=%s) \"%s\": %s", kid, fname,
 				oidc_jose_e2s(cmd->pool, err));
 	}
 
@@ -708,6 +741,17 @@ static const char * oidc_set_unauth_action(cmd_parms *cmd, void *m,
 }
 
 /*
+ * define how to act on unauthorized requests
+ */
+static const char * oidc_set_unautz_action(cmd_parms *cmd, void *m,
+		const char *arg) {
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	const char *rv = oidc_parse_unautz_action(cmd->pool, arg,
+			&dir_cfg->unautz_action);
+	return OIDC_CONFIG_DIR_RV(cmd, rv);
+}
+
+/*
  * set the JWKS refresh interval
  */
 static const char *oidc_set_jwks_refresh_interval(cmd_parms *cmd,
@@ -780,6 +824,30 @@ static const char *oidc_set_token_binding_policy(cmd_parms *cmd,
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
+/*
+ * set the claim prefix
+ */
+static const char *oidc_cfg_set_claim_prefix(cmd_parms *cmd, void *struct_ptr, const char *args) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+    char *w = ap_getword_conf(cmd->pool, &args);
+    if (*w == '\0' || *args != 0)
+    	cfg->claim_prefix = "";
+    else
+    	cfg->claim_prefix = w;
+    return NULL;
+}
+
+/*
+ * get the claim prefix
+ */
+const char *oidc_cfg_claim_prefix(request_rec *r) {
+	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+	if (cfg->claim_prefix == NULL)
+		return OIDC_DEFAULT_CLAIM_PREFIX;
+	return cfg->claim_prefix;
+}
 
 /*
  * create a new server config record with defaults
@@ -890,7 +958,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 
 	c->cookie_domain = NULL;
 	c->claim_delimiter = OIDC_DEFAULT_CLAIM_DELIMITER;
-	c->claim_prefix = OIDC_DEFAULT_CLAIM_PREFIX;
+	c->claim_prefix = NULL;
 	c->remote_user_claim.claim_name = OIDC_DEFAULT_CLAIM_REMOTE_USER;
 	c->remote_user_claim.reg_exp = NULL;
 	c->pass_idtoken_as = OIDC_PASS_IDTOKEN_AS_CLAIMS;
@@ -1257,7 +1325,7 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			apr_strnatcmp(add->claim_delimiter, OIDC_DEFAULT_CLAIM_DELIMITER)
 			!= 0 ? add->claim_delimiter : base->claim_delimiter;
 	c->claim_prefix =
-			apr_strnatcmp(add->claim_prefix, OIDC_DEFAULT_CLAIM_PREFIX) != 0 ?
+			add->claim_prefix != NULL ?
 					add->claim_prefix : base->claim_prefix;
 	c->remote_user_claim.claim_name =
 			apr_strnatcmp(add->remote_user_claim.claim_name,
@@ -1355,6 +1423,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->cookie_path = OIDC_CONFIG_STRING_UNSET;
 	c->authn_header = OIDC_CONFIG_STRING_UNSET;
 	c->unauth_action = OIDC_CONFIG_POS_INT_UNSET;
+	c->unautz_action = OIDC_CONFIG_POS_INT_UNSET;
 	c->pass_cookies = NULL;
 	c->strip_cookies = NULL;
 	c->pass_info_in_headers = OIDC_CONFIG_POS_INT_UNSET;
@@ -1364,6 +1433,8 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->oauth_token_introspect_interval = OIDC_CONFIG_POS_INT_UNSET;
 	c->preserve_post = OIDC_CONFIG_POS_INT_UNSET;
 	c->pass_refresh_token = OIDC_CONFIG_POS_INT_UNSET;
+	c->path_auth_request_params = NULL;
+	c->path_scope = NULL;
 	return (c);
 }
 
@@ -1484,6 +1555,26 @@ int oidc_dir_cfg_unauth_action(request_rec *r) {
 	return dir_cfg->unauth_action;
 }
 
+int oidc_dir_cfg_unautz_action(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	if (dir_cfg->unautz_action == OIDC_CONFIG_POS_INT_UNSET)
+		return OIDC_DEFAULT_UNAUTZ_ACTION;
+	return dir_cfg->unautz_action;
+}
+
+char *oidc_dir_cfg_path_auth_request_params(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	return dir_cfg->path_auth_request_params;
+}
+
+char *oidc_dir_cfg_path_scope(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	return dir_cfg->path_scope;
+}
+
 /*
  * merge a new directory config with a base one
  */
@@ -1506,6 +1597,9 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->unauth_action =
 			add->unauth_action != OIDC_CONFIG_POS_INT_UNSET ?
 					add->unauth_action : base->unauth_action;
+	c->unautz_action =
+			add->unautz_action != OIDC_CONFIG_POS_INT_UNSET ?
+					add->unautz_action : base->unautz_action;
 
 	c->pass_cookies =
 			add->pass_cookies != NULL ? add->pass_cookies : base->pass_cookies;
@@ -1536,6 +1630,12 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->pass_refresh_token =
 			add->pass_refresh_token != OIDC_CONFIG_POS_INT_UNSET ?
 					add->pass_refresh_token : base->pass_refresh_token;
+	c->path_auth_request_params =
+			add->path_auth_request_params != NULL ?
+					add->path_auth_request_params : base->path_auth_request_params;
+	c->path_scope =
+			add->path_scope != NULL ? add->path_scope : base->path_scope;
+
 	return (c);
 }
 
@@ -1553,6 +1653,7 @@ static int oidc_check_config_error(server_rec *s, const char *config_str) {
 static int oidc_check_config_openid_openidc(server_rec *s, oidc_cfg *c) {
 
 	apr_uri_t r_uri;
+	apr_byte_t redirect_uri_is_relative;
 
 	if ((c->metadata_dir == NULL) && (c->provider.issuer == NULL)
 			&& (c->provider.metadata_url == NULL)) {
@@ -1563,6 +1664,8 @@ static int oidc_check_config_openid_openidc(server_rec *s, oidc_cfg *c) {
 
 	if (c->redirect_uri == NULL)
 		return oidc_check_config_error(s, "OIDCRedirectURI");
+	redirect_uri_is_relative = (c->redirect_uri[0] == '/');
+
 	if (c->crypto_passphrase == NULL)
 		return oidc_check_config_error(s, "OIDCCryptoPassphrase");
 
@@ -1592,14 +1695,18 @@ static int oidc_check_config_openid_openidc(server_rec *s, oidc_cfg *c) {
 	}
 
 	apr_uri_parse(s->process->pconf, c->redirect_uri, &r_uri);
-	if (apr_strnatcmp(r_uri.scheme, "https") != 0) {
-		oidc_swarn(s,
-				"the URL scheme (%s) of the configured OIDCRedirectURI SHOULD be \"https\" for security reasons (moreover: some Providers may reject non-HTTPS URLs)",
-				r_uri.scheme);
+	if (!redirect_uri_is_relative) {
+		if (apr_strnatcmp(r_uri.scheme, "https") != 0) {
+			oidc_swarn(s,
+					"the URL scheme (%s) of the configured OIDCRedirectURI SHOULD be \"https\" for security reasons (moreover: some Providers may reject non-HTTPS URLs)",
+					r_uri.scheme);
+		}
 	}
 
 	if (c->cookie_domain != NULL) {
-		if (!oidc_util_cookie_domain_valid(r_uri.hostname, c->cookie_domain)) {
+		if (redirect_uri_is_relative) {
+				oidc_swarn(s,	"if the configured OIDCRedirectURI is relative, OIDCCookieDomain SHOULD be empty");
+		} else if (!oidc_util_cookie_domain_valid(r_uri.hostname, c->cookie_domain)) {
 			oidc_serror(s,
 					"the domain (%s) configured in OIDCCookieDomain does not match the URL hostname (%s) of the configured OIDCRedirectURI (%s): setting \"state\" and \"session\" cookies will not work!",
 					c->cookie_domain, r_uri.hostname, c->redirect_uri);
@@ -1648,8 +1755,7 @@ static int oidc_config_check_vhost_config(apr_pool_t *pool, server_rec *s) {
 
 	if ((cfg->metadata_dir != NULL) || (cfg->provider.issuer != NULL)
 			|| (cfg->provider.metadata_url != NULL)
-			|| (cfg->redirect_uri != NULL)
-			|| (cfg->crypto_passphrase != NULL)) {
+			|| (cfg->redirect_uri != NULL)) {
 		if (oidc_check_config_openid_openidc(s, cfg) != OK)
 			return HTTP_INTERNAL_SERVER_ERROR;
 	}
@@ -2077,10 +2183,16 @@ const command_rec oidc_config_cmds[] = {
 				(void *) APR_OFFSETOF(oidc_cfg, provider.client_contact),
 				RSRC_CONF,
 				"Define the contact that the client registers in dynamic registration with the OP."),
-		AP_INIT_TAKE1("OIDCScope", oidc_set_string_slot,
+		AP_INIT_TAKE1("OIDCScope",
+				oidc_set_string_slot,
 				(void *) APR_OFFSETOF(oidc_cfg, provider.scope),
 				RSRC_CONF,
 				"Define the OpenID Connect scope that is requested from the OP."),
+		AP_INIT_TAKE1("OIDCPathScope",
+				ap_set_string_slot,
+				(void*)APR_OFFSETOF(oidc_dir_cfg, path_scope),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"Define the OpenID Connect scope that is requested from all providers for a specific path/context."),
 		AP_INIT_TAKE1("OIDCJWKSRefreshInterval",
 				oidc_set_jwks_refresh_interval,
 				(void*)APR_OFFSETOF(oidc_cfg, provider.jwks_refresh_interval),
@@ -2100,6 +2212,11 @@ const command_rec oidc_config_cmds[] = {
 				oidc_set_string_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, provider.auth_request_params),
 				RSRC_CONF,
+				"Extra parameters that need to be sent in the Authorization Request (must be query-encoded like \"display=popup&prompt=consent\"."),
+		AP_INIT_TAKE1("OIDCPathAuthRequestParams",
+				ap_set_string_slot,
+				(void*)APR_OFFSETOF(oidc_dir_cfg, path_auth_request_params),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Extra parameters that need to be sent in the Authorization Request (must be query-encoded like \"display=popup&prompt=consent\"."),
 		AP_INIT_TAKE1("OIDCPKCEMethod",
 				oidc_set_pkce_method,
@@ -2125,7 +2242,7 @@ const command_rec oidc_config_cmds[] = {
 				RSRC_CONF,
 				"TLS client certificate private key used for calls to OpenID Connect OP token endpoint."),
 
-		AP_INIT_TAKE1("OIDCRedirectURI", oidc_set_url_slot,
+		AP_INIT_TAKE1("OIDCRedirectURI", oidc_set_relative_or_absolute_url_slot,
 				(void *)APR_OFFSETOF(oidc_cfg, redirect_uri),
 				RSRC_CONF,
 				"Define the Redirect URI (e.g.: https://localhost:9031/protected/example/)"),
@@ -2166,7 +2283,7 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_cfg, claim_delimiter),
 				RSRC_CONF,
 				"The delimiter to use when setting multi-valued claims in the HTTP headers."),
-		AP_INIT_TAKE1("OIDCClaimPrefix", oidc_set_string_slot,
+		AP_INIT_RAW_ARGS("OIDCClaimPrefix", oidc_cfg_set_claim_prefix,
 				(void*)APR_OFFSETOF(oidc_cfg, claim_prefix),
 				RSRC_CONF,
 				"The prefix to use when setting claims in the HTTP headers."),
@@ -2378,6 +2495,11 @@ const command_rec oidc_config_cmds[] = {
 				(void *) APR_OFFSETOF(oidc_dir_cfg, unauth_action),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Sets the action taken when an unauthenticated request occurs: must be one of \"auth\" (default), \"pass\" , \"401\" or \"410\"."),
+		AP_INIT_TAKE1("OIDCUnAutzAction",
+				oidc_set_unautz_action,
+				(void *) APR_OFFSETOF(oidc_dir_cfg, unautz_action),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"Sets the action taken when an unauthorized request occurs: must be one of \"401\" (default), \"403\" or \"auth\"."),
 		AP_INIT_TAKE1("OIDCPassClaimsAs",
 				oidc_set_pass_claims_as, NULL,
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
@@ -2408,7 +2530,7 @@ const command_rec oidc_config_cmds[] = {
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Pass the refresh token in a header and/or environment variable (On or Off)"),
 		AP_INIT_TAKE1("OIDCRequestObject",
-				ap_set_string_slot,
+				oidc_set_string_slot,
 				(void *)APR_OFFSETOF(oidc_cfg, provider.request_object),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"The default request object settings"),

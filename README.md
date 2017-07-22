@@ -158,7 +158,7 @@ Note that this is not an OpenID Connect SSO scenario where users are authenticat
 scenario where **mod_auth_openidc** is the OAuth 2.0 Resource Server instead of the RP/client. How the actual
 client accessing the protected resources got its access token is not relevant to this Apache Resource Server setup.
 
-###OpenID Connect SSO with multiple OpenID Connect Providers
+### OpenID Connect SSO with multiple OpenID Connect Providers
 
 Sample configuration for multiple OpenID Connect providers, which triggers OpenID
 Connect Discovery first to find the user's OP.
@@ -247,7 +247,7 @@ URL-encoded account name for OpenID Connect Discovery purposes (aka. e-mail styl
 
 Sample callback:
 
-    <oidc_callback>?target_link_uri=<target_link_uri>&iss=[<issuer>|<domain>|<e-mail-style-account-name>][&login_hint=<name>][&auth_request_params=<urlencoded-query-string>]
+    <oidc_callback>?target_link_uri=<target_link_uri>&iss=[<issuer>|<domain>|<e-mail-style-account-name>][&login_hint=<name>][&scopes=<space-separated-scopes>][&auth_request_params=<urlencoded-query-string>]
 
 This is also the OpenID Connect specified way of triggering 3rd party initiated SSO 
 to a specific provider when multiple OPs have been configured. In that case the callback
@@ -257,7 +257,7 @@ An additional **mod_auth_openidc** specific parameter named `auth_request_params
 in, see the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki#13-how-can-i-add-custom-parameters-to-the-authorization-request)
 for its usage.
 
-###OpenID Connect SSO & OAuth 2.0 Access Control with PingFederate
+### OpenID Connect SSO & OAuth 2.0 Access Control with PingFederate
 
 Another example config for using PingFederate as your OpenID Connect OP and/or
 OAuth 2.0 Authorization server, based on the OAuth 2.0 PlayGround 3.x default
@@ -351,8 +351,9 @@ The corresponding forum/archive is at:
 For commercial support and consultancy you can contact:  
   [info@zmartzone.eu](mailto:info@zmartzone.eu)  
 
-Any questions/issues should go to the mailing list, the Github issues tracker or the
-primary author [hans.zandbelt@zmartzone.eu](mailto:hans.zandbelt@zmartzone.eu)
+Any questions/issues should go to the mailing list or the
+primary author [hans.zandbelt@zmartzone.eu](mailto:hans.zandbelt@zmartzone.eu).  
+The Github issues tracker should be used only for bugs reports and feature requests.
 
 Disclaimer
 ----------

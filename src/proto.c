@@ -203,31 +203,16 @@ apr_byte_t oidc_proto_get_encryption_jwk_by_type(request_rec *r, oidc_cfg *cfg,
 }
 
 /*
- * generate a request object and pass it by reference in the authorization request
+ * generate a request object
  */
-char *oidc_proto_create_request_uri(request_rec *r,
-		struct oidc_provider_t *provider, const char *redirect_uri,
+char *oidc_proto_create_request_object(request_rec *r,
+		struct oidc_provider_t *provider, json_t * request_object_config,
 		const char *authorization_request) {
 
 	oidc_debug(r, "enter");
 
 	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
-
-	/* parse the request object configuration from a string in to a JSON structure */
-	json_t *request_object_config = NULL;
-	if (oidc_util_decode_json_object(r, provider->request_object,
-			&request_object_config) == FALSE)
-		return FALSE;
-
-	/* see if we need to override the resolver URL, mostly for test purposes */
-	char *resolver_url = NULL;
-	if (json_object_get(request_object_config, "url") != NULL)
-		resolver_url = apr_pstrdup(r->pool,
-				json_string_value(
-						json_object_get(request_object_config, "url")));
-	else
-		resolver_url = apr_pstrdup(r->pool, redirect_uri);
 
 	/* create the request object value */
 	oidc_jwt_t *request_object = oidc_jwt_new(r->pool, TRUE, TRUE);
@@ -383,6 +368,31 @@ char *oidc_proto_create_request_uri(request_rec *r,
 	oidc_debug(r, "serialized request object = \"%s\"",
 			serialized_request_object);
 
+	return serialized_request_object;
+}
+
+/*
+ * generate a request object and pass it by reference in the authorization request
+ */
+char *oidc_proto_create_request_uri(request_rec *r,
+		struct oidc_provider_t *provider, json_t * request_object_config, const char *redirect_uri,
+		const char *authorization_request) {
+
+	oidc_debug(r, "enter");
+
+
+	/* see if we need to override the resolver URL, mostly for test purposes */
+	char *resolver_url = NULL;
+	if (json_object_get(request_object_config, "url") != NULL)
+		resolver_url = apr_pstrdup(r->pool,
+				json_string_value(
+						json_object_get(request_object_config, "url")));
+	else
+		resolver_url = apr_pstrdup(r->pool, redirect_uri);
+
+
+	char *serialized_request_object = oidc_proto_create_request_object(r, provider, request_object_config, authorization_request);
+
 	/* generate a temporary reference, store the request object in the cache and generate a Request URI that references it */
 	char *request_uri = NULL;
 	if (serialized_request_object != NULL) {
@@ -400,19 +410,74 @@ char *oidc_proto_create_request_uri(request_rec *r,
 }
 
 /*
+ * Generic function to generate request/request_object parameter with value
+ */
+char *oidc_proto_create_request_param(request_rec *r,
+		struct oidc_provider_t *provider, const char *redirect_uri,
+		const char *authorization_request) {
+
+	/* parse the request object configuration from a string in to a JSON structure */
+	json_t *request_object_config = NULL;
+	if (oidc_util_decode_json_object(r, provider->request_object,
+			&request_object_config) == FALSE)
+		return FALSE;
+
+	/* request_uri is used as default parameter for sending Request Object */
+	char* parameter = OIDC_PROTO_REQUEST_URI;
+
+	/* get request_object_type parameter from config */
+	json_t *request_object_type = json_object_get(request_object_config, "request_object_type");
+	if (request_object_type != NULL) {
+		const char* request_object_type_str = json_string_value(request_object_type);
+		if (request_object_type_str == NULL) {
+			oidc_error(r, "Value of request_object_type in request_object config is not a string");
+			return FALSE;
+		}
+
+		/* ensure parameter variable to have a valid value */
+		if (strcmp(request_object_type_str, OIDC_PROTO_REQUEST_OBJECT) == 0) {
+			parameter = OIDC_PROTO_REQUEST_OBJECT;
+		} else if (strcmp(request_object_type_str, OIDC_PROTO_REQUEST_URI) != 0) {
+			oidc_error(r, "Bad request_object_type in config: %s", request_object_type_str);
+			return FALSE;
+		}
+	}
+
+	/* create request value */
+	char * value = NULL;
+	if (strcmp(parameter, OIDC_PROTO_REQUEST_URI) == 0) {
+		/* parameter is "request_uri" */
+		value = oidc_proto_create_request_uri(r, provider, request_object_config, redirect_uri, authorization_request);
+	} else {
+		/* parameter is "request" */
+		value = oidc_proto_create_request_object(r, provider, request_object_config, authorization_request);
+	}
+
+	/* concatenate parameter with value */
+	char* request_param = NULL;
+	if (value != NULL) {
+		request_param = apr_psprintf(r->pool, "%s=%s", parameter, oidc_util_escape_string(r, value));
+	}
+
+	return request_param;
+}
+
+/*
  * send an OpenID Connect authorization request to the specified provider
  */
 int oidc_proto_authorization_request(request_rec *r,
 		struct oidc_provider_t *provider, const char *login_hint,
 		const char *redirect_uri, const char *state,
 		oidc_proto_state_t *proto_state, const char *id_token_hint,
-		const char *code_challenge, const char *auth_request_params) {
+		const char *code_challenge, const char *auth_request_params,
+		const char *path_scope) {
 
 	/* log some stuff */
 	oidc_debug(r,
-			"enter, issuer=%s, redirect_uri=%s, state=%s, proto_state=%s, code_challenge=%s",
+			"enter, issuer=%s, redirect_uri=%s, state=%s, proto_state=%s, code_challenge=%s, auth_request_params=%s, path_scope=%s",
 			provider->issuer, redirect_uri, state,
-			oidc_proto_state_to_string(r, proto_state), code_challenge);
+			oidc_proto_state_to_string(r, proto_state), code_challenge,
+			auth_request_params, path_scope);
 
 	/* assemble the full URL as the authorization request to the OP where we want to redirect to */
 	char *authorization_request = apr_psprintf(r->pool, "%s%s",
@@ -425,9 +490,14 @@ int oidc_proto_authorization_request(request_rec *r,
 			oidc_util_escape_string(r,
 					oidc_proto_state_get_response_type(proto_state)));
 
-	if (provider->scope != NULL) {
+	/* concat the per-path scopes with the per-provider scopes */
+	const char *scope = provider->scope;
+	if (path_scope != NULL)
+		scope = ((scope != NULL) && (apr_strnatcmp(scope, "") != 0)) ?
+				apr_pstrcat(r->pool, scope, " ", path_scope, NULL) : path_scope;
 
-		if (!oidc_util_spaced_string_contains(r->pool, provider->scope,
+	if (scope != NULL) {
+		if (!oidc_util_spaced_string_contains(r->pool, scope,
 				OIDC_PROTO_SCOPE_OPENID)) {
 			oidc_warn(r,
 					"the configuration for the \"%s\" parameter does not include the \"%s\" scope, your provider may not return an \"id_token\": %s",
@@ -436,7 +506,7 @@ int oidc_proto_authorization_request(request_rec *r,
 
 		authorization_request = apr_psprintf(r->pool, "%s&%s=%s",
 				authorization_request,
-				OIDC_PROTO_SCOPE, oidc_util_escape_string(r, provider->scope));
+				OIDC_PROTO_SCOPE, oidc_util_escape_string(r, scope));
 	}
 
 	authorization_request = apr_psprintf(r->pool, "%s&%s=%s",
@@ -506,13 +576,13 @@ int oidc_proto_authorization_request(request_rec *r,
 	}
 
 	if (provider->request_object != NULL) {
-		/* add a request uri */
-		char *request_uri = oidc_proto_create_request_uri(r, provider,
+		/* add request parameter (request or request_uri) */
+		char *request_param = oidc_proto_create_request_param(r, provider,
 				redirect_uri, authorization_request);
-		if (request_uri != NULL)
-			authorization_request = apr_psprintf(r->pool, "%s&%s=%s",
-					authorization_request, OIDC_PROTO_REQUEST_URI,
-					oidc_util_escape_string(r, request_uri));
+		if (request_param != NULL)
+			authorization_request = apr_psprintf(r->pool, "%s&%s",
+					authorization_request,
+					request_param);
 	}
 
 	/* cleanup */
@@ -994,7 +1064,7 @@ static apr_byte_t oidc_proto_validate_cnf(request_rec *r, oidc_cfg *cfg,
 
 	tbp_str = oidc_util_get_provided_token_binding_id(r);
 	if (tbp_str == NULL) {
-		oidc_warn(r, "no Provided Token Binding ID environment variable found");
+		oidc_debug(r, "no Provided Token Binding ID environment variable found");
 		goto out_err;
 	}
 
@@ -1716,7 +1786,7 @@ static apr_byte_t oidc_proto_resolve_code(request_rec *r, oidc_cfg *cfg,
 	apr_table_addn(params, OIDC_PROTO_GRANT_TYPE,
 			OIDC_PROTO_GRANT_TYPE_AUTHZ_CODE);
 	apr_table_addn(params, OIDC_PROTO_CODE, code);
-	apr_table_addn(params, OIDC_PROTO_REDIRECT_URI, cfg->redirect_uri);
+	apr_table_addn(params, OIDC_PROTO_REDIRECT_URI, oidc_get_redirect_uri(r, cfg));
 
 	if (code_verifier)
 		apr_table_addn(params, OIDC_PROTO_CODE_VERIFIER, code_verifier);

@@ -612,12 +612,14 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 					"recycling user '%s' from initial request for sub-request",
 					r->user);
 
+			/* strip any cookies that we need to */
+			oidc_strip_cookies(r);
+
 			return OK;
 		}
 
 		/* check if this is a request for the public (encryption) keys */
-	} else if ((c->redirect_uri != NULL)
-			&& (oidc_util_request_matches_url(r, c->redirect_uri))) {
+	} else if (oidc_util_request_matches_url(r, oidc_get_redirect_uri(r, c))) {
 
 		if (oidc_util_request_has_parameter(r, "jwks")) {
 
@@ -694,8 +696,8 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 		oidc_util_hdr_in_set(r, authn_header, r->user);
 
 	/* set the resolved claims in the HTTP headers for the target application */
-	oidc_util_set_app_infos(r, token, c->claim_prefix, c->claim_delimiter,
-			pass_headers, pass_envvars);
+	oidc_util_set_app_infos(r, token, oidc_cfg_claim_prefix(r),
+			c->claim_delimiter, pass_headers, pass_envvars);
 
 	/* set the access_token in the app headers */
 	if (access_token != NULL) {
@@ -705,6 +707,9 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 
 	/* free JSON resources */
 	json_decref(token);
+
+	/* strip any cookies that we need to */
+	oidc_strip_cookies(r);
 
 	return OK;
 }

@@ -372,6 +372,14 @@ static const char *oidc_get_current_url_scheme(const request_rec *r) {
 		scheme_str = (char *) ap_http_scheme(r);
 #endif
 	}
+	if ((scheme_str == NULL)
+			|| ((apr_strnatcmp(scheme_str, "http") != 0)
+					&& (apr_strnatcmp(scheme_str, "https") != 0))) {
+		oidc_warn(r,
+				"detected HTTP scheme \"%s\" is not \"http\" nor \"https\"; perhaps your reverse proxy passes a wrongly configured \"%s\" header: falling back to default \"https\"",
+				scheme_str, OIDC_HTTP_HDR_X_FORWARDED_PROTO);
+		scheme_str = "https";
+	}
 	return scheme_str;
 }
 
@@ -431,22 +439,50 @@ const char *oidc_get_current_url_host(request_rec *r) {
 }
 
 /*
- * get the URL that is currently being accessed
+ * get the base part of the current URL (scheme + host (+ port))
  */
-char *oidc_get_current_url(request_rec *r) {
+static const char *oidc_get_current_url_base(request_rec *r) {
 
 	const char *scheme_str = oidc_get_current_url_scheme(r);
 	const char *host_str = oidc_get_current_url_host(r);
 	const char *port_str = oidc_get_current_url_port(r, scheme_str);
 	port_str = port_str ? apr_psprintf(r->pool, ":%s", port_str) : "";
 
-	char *url = apr_pstrcat(r->pool, scheme_str, "://", host_str, port_str,
+	char *url = apr_pstrcat(r->pool, scheme_str, "://", host_str, port_str, NULL);
+
+	return url;
+}
+
+/*
+ * get the URL that is currently being accessed
+ */
+char *oidc_get_current_url(request_rec *r) {
+
+	char *url = apr_pstrcat(r->pool, oidc_get_current_url_base(r),
 			r->uri, (r->args != NULL && *r->args != '\0' ? "?" : ""), r->args,
 			NULL);
 
 	oidc_debug(r, "current URL '%s'", url);
 
 	return url;
+}
+
+/*
+ * determine absolute redirect uri
+ */
+const char *oidc_get_redirect_uri(request_rec *r, oidc_cfg *cfg) {
+
+	char *redirect_uri = cfg->redirect_uri;
+
+	if ((redirect_uri != NULL) && (redirect_uri[0] == '/')) {
+		// relative redirect uri
+
+		redirect_uri = apr_pstrcat(r->pool, oidc_get_current_url_base(r),
+				cfg->redirect_uri, NULL);
+
+		oidc_debug(r, "determined absolute redirect uri: %s", redirect_uri);
+	}
+	return redirect_uri;
 }
 
 /* buffer to hold HTTP call responses */
@@ -1112,6 +1148,9 @@ static apr_byte_t oidc_util_check_json_error(request_rec *r, json_t *json) {
 apr_byte_t oidc_util_decode_json_object(request_rec *r, const char *str,
 		json_t **json) {
 
+	if (str == NULL)
+		return FALSE;
+
 	json_error_t json_error;
 	*json = json_loads(str, 0, &json_error);
 
@@ -1176,8 +1215,13 @@ int oidc_util_http_send(request_rec *r, const char *data, int data_len,
 	APR_BRIGADE_INSERT_TAIL(bb, b);
 	b = apr_bucket_eos_create(r->connection->bucket_alloc);
 	APR_BRIGADE_INSERT_TAIL(bb, b);
-	if (ap_pass_brigade(r->output_filters, bb) != APR_SUCCESS)
+	int rc = ap_pass_brigade(r->output_filters, bb);
+	if (rc != APR_SUCCESS) {
+		oidc_error(r,
+				"ap_pass_brigade returned an error: %d; if you're using this module combined with mod_deflate try make an exception for the OIDCRedirectURI e.g. using SetEnvIf Request_URI <url> no-gzip",
+				rc);
 		return HTTP_INTERNAL_SERVER_ERROR;
+	}
 	//r->status = success_rvalue;
 	return success_rvalue;
 }
@@ -1974,6 +2018,10 @@ static void oidc_util_hdr_out_set(const request_rec *r, const char *name,
 	oidc_util_hdr_table_set(r, r->headers_out, name, value);
 }
 
+static const char *oidc_util_hdr_out_get(const request_rec *r, const char *name) {
+	return apr_table_get(r->headers_out, name);
+}
+
 void oidc_util_hdr_err_out_add(const request_rec *r, const char *name,
 		const char *value) {
 	oidc_debug(r, "%s: %s", name, value);
@@ -2035,6 +2083,10 @@ const char *oidc_util_hdr_in_host_get(const request_rec *r) {
 
 void oidc_util_hdr_out_location_set(const request_rec *r, const char *value) {
 	return oidc_util_hdr_out_set(r, OIDC_HTTP_HDR_LOCATION, value);
+}
+
+const char *oidc_util_hdr_out_location_get(const request_rec *r) {
+	return oidc_util_hdr_out_get(r, OIDC_HTTP_HDR_LOCATION);
 }
 
 const char *oidc_util_get_provided_token_binding_id(const request_rec *r) {

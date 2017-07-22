@@ -488,7 +488,7 @@ const char *oidc_valid_encrypted_response_enc(apr_pool_t *pool, const char *arg)
 }
 
 #define OIDC_SESSION_INACTIVITY_TIMEOUT_MIN 10
-#define OIDC_SESSION_INACTIVITY_TIMEOUT_MAX 86400
+#define OIDC_SESSION_INACTIVITY_TIMEOUT_MAX 3600 * 24 * 365
 
 /*
  * parse a session inactivity timeout value from the provided string
@@ -886,6 +886,34 @@ const char *oidc_parse_unauth_action(apr_pool_t *pool, const char *arg,
 		*action = OIDC_UNAUTH_RETURN401;
 	else if (apr_strnatcmp(arg, OIDC_UNAUTH_ACTION_410_STR) == 0)
 		*action = OIDC_UNAUTH_RETURN410;
+
+	return NULL;
+}
+
+#define OIDC_UNAUTZ_ACTION_AUTH_STR "auth"
+#define OIDC_UNAUTZ_ACTION_401_STR  "401"
+#define OIDC_UNAUTZ_ACTION_403_STR  "403"
+
+/*
+ * parse an "unauthorized action" value from the provided string
+ */
+const char *oidc_parse_unautz_action(apr_pool_t *pool, const char *arg,
+		int *action) {
+	static char *options[] = {
+			OIDC_UNAUTZ_ACTION_AUTH_STR,
+			OIDC_UNAUTZ_ACTION_401_STR,
+			OIDC_UNAUTZ_ACTION_403_STR,
+			NULL };
+	const char *rv = oidc_valid_string_option(pool, arg, options);
+	if (rv != NULL)
+		return rv;
+
+	if (apr_strnatcmp(arg, OIDC_UNAUTZ_ACTION_AUTH_STR) == 0)
+		*action = OIDC_UNAUTZ_AUTHENTICATE;
+	else if (apr_strnatcmp(arg, OIDC_UNAUTZ_ACTION_401_STR) == 0)
+		*action = OIDC_UNAUTZ_RETURN401;
+	else if (apr_strnatcmp(arg, OIDC_UNAUTZ_ACTION_403_STR) == 0)
+		*action = OIDC_UNAUTZ_RETURN403;
 
 	return NULL;
 }

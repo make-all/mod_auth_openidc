@@ -85,8 +85,7 @@ extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 /*
  * clean any suspicious headers in the HTTP request sent by the user agent
  */
-static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix,
-		const char *authn_header) {
+static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix, apr_hash_t *scrub) {
 
 	const int prefix_len = claim_prefix ? strlen(claim_prefix) : 0;
 
@@ -102,9 +101,12 @@ static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix,
 	for (i = 0; i < h->nelts; i++) {
 		const char * const k = e[i].key;
 
-		/* is this header's name equivalent to the header that mod_auth_openidc would set for the authenticated user? */
-		const int authn_header_matches = (k != NULL) && authn_header
-				&& (oidc_strnenvcmp(k, authn_header, -1) == 0);
+		/* is this header's name equivalent to a header that needs scrubbing? */
+		const char *hdr =
+				(k != NULL) && (scrub != NULL) ?
+						apr_hash_get(scrub, k, APR_HASH_KEY_STRING) : NULL;
+		const int header_matches = (hdr != NULL)
+						&& (oidc_strnenvcmp(k, hdr, -1) == 0);
 
 		/*
 		 * would this header be interpreted as a mod_auth_openidc attribute? Note
@@ -117,7 +119,7 @@ static void oidc_scrub_request_headers(request_rec *r, const char *claim_prefix,
 				&& (oidc_strnenvcmp(k, claim_prefix, prefix_len) == 0);
 
 		/* add to the clean_headers if non-suspicious, skip and report otherwise */
-		if (!prefix_matches && !authn_header_matches) {
+		if (!prefix_matches && !header_matches) {
 			apr_table_addn(clean_headers, k, e[i].val);
 		} else {
 			oidc_warn(r, "scrubbed suspicious request header (%s: %.32s)", k,
@@ -138,17 +140,34 @@ void oidc_scrub_headers(request_rec *r) {
 
 	if (cfg->scrub_request_headers != 0) {
 
-		/* scrub all headers starting with OIDC_ first */
-		oidc_scrub_request_headers(r, OIDC_DEFAULT_HEADER_PREFIX,
-				oidc_cfg_dir_authn_header(r));
+		const char *prefix = oidc_cfg_claim_prefix(r);
+		apr_hash_t *hdrs = apr_hash_make(r->pool);
+
+		if (apr_strnatcmp(prefix, "") == 0) {
+			if ((cfg->white_listed_claims != NULL)
+					&& (apr_hash_count(cfg->white_listed_claims) > 0))
+				hdrs = apr_hash_overlay(r->pool, cfg->white_listed_claims,
+						hdrs);
+			else
+				oidc_warn(r,
+						"both OIDCClaimPrefix and OIDCWhiteListedClaims are empty: this renders an insecure setup!");
+		}
+
+		char *authn_hdr = oidc_cfg_dir_authn_header(r);
+		if (authn_hdr != NULL)
+			apr_hash_set(hdrs, authn_hdr, APR_HASH_KEY_STRING, authn_hdr);
+
+		/*
+		 * scrub all headers starting with OIDC_ first
+		 */
+		oidc_scrub_request_headers(r, OIDC_DEFAULT_HEADER_PREFIX, hdrs);
 
 		/*
 		 * then see if the claim headers need to be removed on top of that
 		 * (i.e. the prefix does not start with the default OIDC_)
 		 */
-		if ((strstr(cfg->claim_prefix, OIDC_DEFAULT_HEADER_PREFIX)
-				!= cfg->claim_prefix)) {
-			oidc_scrub_request_headers(r, cfg->claim_prefix, NULL);
+		if ((strstr(prefix, OIDC_DEFAULT_HEADER_PREFIX) != prefix)) {
+			oidc_scrub_request_headers(r, prefix, NULL);
 		}
 	}
 }
@@ -156,7 +175,7 @@ void oidc_scrub_headers(request_rec *r) {
 /*
  * strip the session cookie from the headers sent to the application/backend
  */
-static void oidc_strip_cookies(request_rec *r) {
+void oidc_strip_cookies(request_rec *r) {
 
 	char *cookie, *ctx, *result = NULL;
 	const char *name = NULL;
@@ -369,7 +388,7 @@ static const char *oidc_original_request_method(request_rec *r, oidc_cfg *cfg,
 
 	char *m = NULL;
 	if ((handle_discovery_response == TRUE)
-			&& (oidc_util_request_matches_url(r, cfg->redirect_uri))
+			&& (oidc_util_request_matches_url(r, oidc_get_redirect_uri(r, cfg)))
 			&& (oidc_is_discovery_response(r, cfg))) {
 		oidc_util_get_request_parameter(r, OIDC_DISC_RM_PARAM, &m);
 		if (m != NULL)
@@ -850,7 +869,7 @@ static apr_byte_t oidc_set_app_claims(request_rec *r,
 
 	/* set the resolved claims a HTTP headers for the application */
 	if (j_claims != NULL) {
-		oidc_util_set_app_infos(r, j_claims, cfg->claim_prefix,
+		oidc_util_set_app_infos(r, j_claims, oidc_cfg_claim_prefix(r),
 				cfg->claim_delimiter, oidc_cfg_dir_pass_info_in_headers(r),
 				oidc_cfg_dir_pass_info_in_envvars(r));
 
@@ -864,7 +883,7 @@ static apr_byte_t oidc_set_app_claims(request_rec *r,
 static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 		oidc_provider_t *provider, const char *original_url,
 		const char *login_hint, const char *id_token_hint, const char *prompt,
-		const char *auth_request_params);
+		const char *auth_request_params, const char *path_scope);
 
 /*
  * log message about max session duration
@@ -917,7 +936,18 @@ static int oidc_handle_unauthenticated_user(request_rec *r, oidc_cfg *c) {
 	 * and we need to authenticate the user
 	 */
 	return oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
-			NULL, NULL, NULL);
+			NULL, NULL, oidc_dir_cfg_path_auth_request_params(r), oidc_dir_cfg_path_scope(r));
+}
+
+/*
+ * see if this is a non-browser request
+ */
+static apr_byte_t oidc_is_xml_http_request(request_rec *r) {
+	if ((oidc_util_hdr_in_x_requested_with_get(r) != NULL)
+			&& (apr_strnatcasecmp(oidc_util_hdr_in_x_requested_with_get(r),
+					OIDC_HTTP_HDR_VAL_XML_HTTP_REQUEST) == 0))
+		return TRUE;
+	return FALSE;
 }
 
 /*
@@ -1431,7 +1461,7 @@ static int oidc_session_redirect_parent_window_to_logout(request_rec *r,
 	char *java_script = apr_psprintf(r->pool,
 			"    <script type=\"text/javascript\">\n"
 			"      window.top.location.href = '%s?session=logout';\n"
-			"    </script>\n", c->redirect_uri);
+			"    </script>\n", oidc_get_redirect_uri(r, c));
 
 	return oidc_util_html_send(r, "Redirecting...", java_script, NULL, NULL,
 			DONE);
@@ -1610,6 +1640,10 @@ static apr_byte_t oidc_save_in_session(request_rec *r, oidc_cfg *c,
 					(apr_time_now()
 							+ apr_time_from_sec(provider->session_max_duration));
 	oidc_session_set_session_expires(r, session, session_expires);
+
+	oidc_debug(r,
+			"provider->session_max_duration = %d, session_expires=%" APR_TIME_T_FMT,
+			provider->session_max_duration, session_expires);
 
 	/* log message about max session duration */
 	oidc_log_session_expires(r, "session max lifetime", session_expires);
@@ -1954,6 +1988,9 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 	if (oidc_proto_generate_nonce(r, &csrf, 8) == FALSE)
 		return HTTP_INTERNAL_SERVER_ERROR;
 
+	char *path_scopes = oidc_dir_cfg_path_scope(r);
+	char *path_auth_request_params = oidc_dir_cfg_path_auth_request_params(r);
+
 	char *discover_url = oidc_cfg_dir_discover_url(r);
 	/* see if there's an external discovery page configured */
 	if (discover_url != NULL) {
@@ -1964,8 +2001,15 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 						OIDC_DISC_RT_PARAM, oidc_util_escape_string(r, current_url),
 						OIDC_DISC_RM_PARAM, method,
 						OIDC_DISC_CB_PARAM,
-						oidc_util_escape_string(r, cfg->redirect_uri),
+						oidc_util_escape_string(r, oidc_get_redirect_uri(r, cfg)),
 						OIDC_CSRF_NAME, oidc_util_escape_string(r, csrf));
+
+		if (path_scopes != NULL)
+			url = apr_psprintf(r->pool, "%s&%s=%s", url, OIDC_DISC_SC_PARAM,
+					oidc_util_escape_string(r, path_scopes));
+		if (path_auth_request_params != NULL)
+			url = apr_psprintf(r->pool, "%s&%s=%s", url, OIDC_DISC_AR_PARAM,
+					oidc_util_escape_string(r, path_auth_request_params));
 
 		/* log what we're about to do */
 		oidc_debug(r, "redirecting to external discovery page: %s", url);
@@ -2000,8 +2044,26 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 	/* list all configured providers in there */
 	int i;
 	for (i = 0; i < arr->nelts; i++) {
+
 		const char *issuer = ((const char**) arr->elts)[i];
 		// TODO: html escape (especially & character)
+
+		char *href = apr_psprintf(r->pool,
+				"%s?%s=%s&amp;%s=%s&amp;%s=%s&amp;%s=%s",
+				oidc_get_redirect_uri(r, cfg), OIDC_DISC_OP_PARAM,
+				oidc_util_escape_string(r, issuer),
+				OIDC_DISC_RT_PARAM, oidc_util_escape_string(r, current_url),
+				OIDC_DISC_RM_PARAM, method,
+				OIDC_CSRF_NAME, csrf);
+
+		if (path_scopes != NULL)
+			href = apr_psprintf(r->pool, "%s&amp;%s=%s", href,
+					OIDC_DISC_SC_PARAM,
+					oidc_util_escape_string(r, path_scopes));
+		if (path_auth_request_params != NULL)
+			href = apr_psprintf(r->pool, "%s&amp;%s=%s", href,
+					OIDC_DISC_AR_PARAM,
+					oidc_util_escape_string(r, path_auth_request_params));
 
 		char *display =
 				(strstr(issuer, "https://") == NULL) ?
@@ -2014,18 +2076,13 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 		/* point back to the redirect_uri, where the selection is handled, with an IDP selection and return_to URL */
 		s =
 				apr_psprintf(r->pool,
-						"%s<p><a href=\"%s?%s=%s&amp;%s=%s&amp;%s=%s&amp;%s=%s\">%s</a></p>\n",
-						s, cfg->redirect_uri, OIDC_DISC_OP_PARAM,
-						oidc_util_escape_string(r, issuer),
-						OIDC_DISC_RT_PARAM,
-						oidc_util_escape_string(r, current_url),
-						OIDC_DISC_RM_PARAM, method,
-						OIDC_CSRF_NAME, csrf, display);
+						"%s<p><a href=\"%s\">%s</a></p>\n",
+						s, href, display);
 	}
 
 	/* add an option to enter an account or issuer name for dynamic OP discovery */
 	s = apr_psprintf(r->pool, "%s<form method=\"get\" action=\"%s\">\n", s,
-			cfg->redirect_uri);
+			oidc_get_redirect_uri(r, cfg));
 	s = apr_psprintf(r->pool,
 			"%s<p><input type=\"hidden\" name=\"%s\" value=\"%s\"><p>\n", s,
 			OIDC_DISC_RT_PARAM, current_url);
@@ -2035,6 +2092,16 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 	s = apr_psprintf(r->pool,
 			"%s<p><input type=\"hidden\" name=\"%s\" value=\"%s\"><p>\n", s,
 			OIDC_CSRF_NAME, csrf);
+
+	if (path_scopes != NULL)
+		s = apr_psprintf(r->pool,
+				"%s<p><input type=\"hidden\" name=\"%s\" value=\"%s\"><p>\n", s,
+				OIDC_DISC_SC_PARAM, path_scopes);
+	if (path_auth_request_params != NULL)
+		s = apr_psprintf(r->pool,
+				"%s<p><input type=\"hidden\" name=\"%s\" value=\"%s\"><p>\n", s,
+				OIDC_DISC_AR_PARAM, path_auth_request_params);
+
 	s =
 			apr_psprintf(r->pool,
 					"%s<p>Or enter your account name (eg. &quot;mike@seed.gluu.org&quot;, or an IDP identifier (eg. &quot;mitreid.org&quot;):</p>\n",
@@ -2067,7 +2134,7 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
 static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 		oidc_provider_t *provider, const char *original_url,
 		const char *login_hint, const char *id_token_hint, const char *prompt,
-		const char *auth_request_params) {
+		const char *auth_request_params, const char *path_scope) {
 
 	oidc_debug(r, "enter");
 
@@ -2134,7 +2201,7 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 	apr_uri_t r_uri;
 	memset(&r_uri, 0, sizeof(apr_uri_t));
 	apr_uri_parse(r->pool, original_url, &o_uri);
-	apr_uri_parse(r->pool, c->redirect_uri, &r_uri);
+	apr_uri_parse(r->pool, oidc_get_redirect_uri(r, c), &r_uri);
 	if ((apr_strnatcmp(o_uri.scheme, r_uri.scheme) != 0)
 			&& (apr_strnatcmp(r_uri.scheme, "https") == 0)) {
 		oidc_error(r,
@@ -2165,8 +2232,8 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 	/* send off to the OpenID Connect Provider */
 	// TODO: maybe show intermediate/progress screen "redirecting to"
 	return oidc_proto_authorization_request(r, provider, login_hint,
-			c->redirect_uri, state, proto_state, id_token_hint, code_challenge,
-			auth_request_params);
+			oidc_get_redirect_uri(r, c), state, proto_state, id_token_hint,
+			code_challenge, auth_request_params, path_scope);
 }
 
 /*
@@ -2185,7 +2252,7 @@ static int oidc_target_link_uri_matches_configuration(request_rec *r,
 	}
 
 	apr_uri_t r_uri;
-	apr_uri_parse(r->pool, cfg->redirect_uri, &r_uri);
+	apr_uri_parse(r->pool, oidc_get_redirect_uri(r, cfg), &r_uri);
 
 	if (cfg->cookie_domain == NULL) {
 		/* cookie_domain set: see if the target_link_uri matches the redirect_uri host (because the session cookie will be set host-wide) */
@@ -2241,17 +2308,19 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 	/* variables to hold the values returned in the response */
 	char *issuer = NULL, *target_link_uri = NULL, *login_hint = NULL,
 			*auth_request_params = NULL, *csrf_cookie, *csrf_query = NULL,
-			*user = NULL;
+			*user = NULL, *path_scopes;
 	oidc_provider_t *provider = NULL;
 
 	oidc_util_get_request_parameter(r, OIDC_DISC_OP_PARAM, &issuer);
 	oidc_util_get_request_parameter(r, OIDC_DISC_USER_PARAM, &user);
 	oidc_util_get_request_parameter(r, OIDC_DISC_RT_PARAM, &target_link_uri);
 	oidc_util_get_request_parameter(r, OIDC_DISC_LH_PARAM, &login_hint);
+	oidc_util_get_request_parameter(r, OIDC_DISC_SC_PARAM, &path_scopes);
 	oidc_util_get_request_parameter(r, OIDC_DISC_AR_PARAM,
 			&auth_request_params);
 	oidc_util_get_request_parameter(r, OIDC_CSRF_NAME, &csrf_query);
 	csrf_cookie = oidc_util_get_cookie(r, OIDC_CSRF_NAME);
+
 
 	/* do CSRF protection if not 3rd party initiated SSO */
 	if (csrf_cookie) {
@@ -2291,6 +2360,23 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 				"Invalid Request",
 				"\"target_link_uri\" parameter does not match configuration settings, aborting to prevent an open redirect.",
 				HTTP_UNAUTHORIZED);
+	}
+
+	/* see if this is a static setup */
+	if (c->metadata_dir == NULL) {
+		if ((oidc_provider_static_config(r, c, &provider) == TRUE)
+				&& (issuer != NULL)) {
+			if (apr_strnatcmp(provider->issuer, issuer) != 0) {
+				return oidc_util_html_send_error(r, c->error_template,
+						"Invalid Request",
+						apr_psprintf(r->pool,
+								"The \"iss\" value must match the configured providers' one (%s != %s).",
+								issuer, c->provider.issuer),
+								HTTP_INTERNAL_SERVER_ERROR);
+			}
+		}
+		return oidc_authenticate_user(r, c, NULL, target_link_uri, login_hint,
+				NULL, NULL, auth_request_params, path_scopes);
 	}
 
 	/* find out if the user entered an account name or selected an OP manually */
@@ -2348,7 +2434,7 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
 
 		/* now we've got a selected OP, send the user there to authenticate */
 		return oidc_authenticate_user(r, c, provider, target_link_uri,
-				login_hint, NULL, NULL, auth_request_params);
+				login_hint, NULL, NULL, auth_request_params, path_scopes);
 	}
 
 	/* something went wrong */
@@ -2625,9 +2711,10 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 	if (s_poll_interval == NULL)
 		s_poll_interval = "3000";
 
+	const char *redirect_uri = oidc_get_redirect_uri(r, c);
 	java_script = apr_psprintf(r->pool, java_script, origin, client_id,
-			session_state, op_iframe_id, s_poll_interval, c->redirect_uri,
-			c->redirect_uri);
+			session_state, op_iframe_id, s_poll_interval, redirect_uri,
+			redirect_uri);
 
 	return oidc_util_html_send(r, NULL, java_script, "setTimer", NULL, DONE);
 }
@@ -2687,9 +2774,17 @@ static int oidc_handle_session_management(request_rec *r, oidc_cfg *c,
 		id_token_hint = oidc_session_get_idtoken(r, session);
 		oidc_get_provider_from_session(r, c, session, &provider);
 		if ((session->remote_user != NULL) && (provider != NULL)) {
+			/*
+			 * TODO: this doesn't work with per-path provided auth_request_params and scopes
+			 *       as oidc_dir_cfg_path_auth_request_params and oidc_dir_cfg_path_scope will pick
+			 *       those for the redirect_uri itself; do we need to store those as part of the
+			 *       session now?
+			 */
 			return oidc_authenticate_user(r, c, provider,
 					apr_psprintf(r->pool, "%s?session=iframe_rp",
-							c->redirect_uri), NULL, id_token_hint, "none", NULL);
+							oidc_get_redirect_uri(r, c)), NULL, id_token_hint,
+							"none", oidc_dir_cfg_path_auth_request_params(r),
+							oidc_dir_cfg_path_scope(r));
 		}
 		oidc_debug(r,
 				"[session=check] calling oidc_handle_logout_request because no session found.");
@@ -3082,7 +3177,7 @@ int oidc_handle_redirect_uri_request(request_rec *r, oidc_cfg *c,
  */
 static int oidc_check_userid_openidc(request_rec *r, oidc_cfg *c) {
 
-	if (c->redirect_uri == NULL) {
+	if (oidc_get_redirect_uri(r, c) == NULL) {
 		oidc_error(r,
 				"configuration error: the authentication type is set to \"openid-connect\" but OIDCRedirectURI has not been set");
 		return HTTP_INTERNAL_SERVER_ERROR;
@@ -3098,7 +3193,7 @@ static int oidc_check_userid_openidc(request_rec *r, oidc_cfg *c) {
 		oidc_session_load(r, &session);
 
 		/* see if the initial request is to the redirect URI; this handles potential logout too */
-		if (oidc_util_request_matches_url(r, c->redirect_uri)) {
+		if (oidc_util_request_matches_url(r, oidc_get_redirect_uri(r, c))) {
 
 			/* handle request to the redirect_uri */
 			rc = oidc_handle_redirect_uri_request(r, c, session);
@@ -3247,6 +3342,59 @@ static void oidc_authz_get_claims_and_idtoken(request_rec *r, json_t **claims,
 }
 
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+
+/*
+ * find out which action we need to take when encountering an unauthorized request
+ */
+static authz_status oidc_handle_unauthorized_user24(request_rec *r) {
+
+	oidc_debug(r, "enter");
+
+	oidc_cfg *c = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+
+	if (apr_strnatcasecmp((const char *) ap_auth_type(r), "oauth20") == 0) {
+		oidc_oauth_return_www_authenticate(r, "insufficient_scope",
+				"Different scope(s) or other claims required");
+		return AUTHZ_DENIED;
+	}
+
+	/* see if we've configured OIDCUnAutzAction for this path */
+	switch (oidc_dir_cfg_unautz_action(r)) {
+	// TODO: document that AuthzSendForbiddenOnFailure is required to return 403 FORBIDDEN
+	case OIDC_UNAUTZ_RETURN403:
+	case OIDC_UNAUTZ_RETURN401:
+		return AUTHZ_DENIED;
+		break;
+	case OIDC_UNAUTZ_AUTHENTICATE:
+		/*
+		 * exception handling: if this looks like a XMLHttpRequest call we
+		 * won't redirect the user and thus avoid creating a state cookie
+		 * for a non-browser (= Javascript) call that will never return from the OP
+		 */
+		if (oidc_is_xml_http_request(r) == TRUE)
+			return AUTHZ_DENIED;
+		break;
+	}
+
+	oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
+			NULL, NULL, oidc_dir_cfg_path_auth_request_params(r),
+			oidc_dir_cfg_path_scope(r));
+
+	const char *location = oidc_util_hdr_out_location_get(r);
+	if (location != NULL) {
+		oidc_debug(r, "send HTML refresh with authorization redirect: %s", location);
+
+		char *html_head = apr_psprintf(r->pool,
+				"<meta http-equiv=\"refresh\" content=\"0; url=%s\">",
+				location);
+		oidc_util_html_send(r, "Stepup Authentication", html_head, NULL, NULL,
+				HTTP_UNAUTHORIZED);
+	}
+
+	return AUTHZ_DENIED;
+}
+
 /*
  * generic Apache >=2.4 authorization hook for this module
  * handles both OpenID Connect or OAuth 2.0 in the same way, based on the claims stored in the session
@@ -3282,11 +3430,8 @@ authz_status oidc_authz_checker(request_rec *r, const char *require_args,
 	if (id_token)
 		json_decref(id_token);
 
-	if ((rc == AUTHZ_DENIED) && ap_auth_type(r)
-			&& (apr_strnatcasecmp((const char *) ap_auth_type(r), "oauth20")
-					== 0))
-		oidc_oauth_return_www_authenticate(r, "insufficient_scope",
-				"Different scope(s) or other claims required");
+	if ((rc == AUTHZ_DENIED) && ap_auth_type(r))
+		rc = oidc_handle_unauthorized_user24(r);
 
 	return rc;
 }
@@ -3304,6 +3449,40 @@ authz_status oidc_authz_checker_claims_expr(request_rec *r, const char *require_
 #endif
 
 #else
+
+/*
+ * find out which action we need to take when encountering an unauthorized request
+ */
+static int oidc_handle_unauthorized_user22(request_rec *r) {
+
+	oidc_cfg *c = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
+
+	if (apr_strnatcasecmp((const char *) ap_auth_type(r), "oauth20") == 0) {
+		oidc_oauth_return_www_authenticate(r, "insufficient_scope", "Different scope(s) or other claims required");
+		return HTTP_UNAUTHORIZED;
+	}
+
+	/* see if we've configured OIDCUnAutzAction for this path */
+	switch (oidc_dir_cfg_unautz_action(r)) {
+	case OIDC_UNAUTZ_RETURN403:
+		return HTTP_FORBIDDEN;
+	case OIDC_UNAUTZ_RETURN401:
+		return HTTP_UNAUTHORIZED;
+	case OIDC_UNAUTZ_AUTHENTICATE:
+		/*
+		 * exception handling: if this looks like a XMLHttpRequest call we
+		 * won't redirect the user and thus avoid creating a state cookie
+		 * for a non-browser (= Javascript) call that will never return from the OP
+		 */
+		if (oidc_is_xml_http_request(r) == TRUE)
+			return HTTP_UNAUTHORIZED;
+	}
+
+	return oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
+			NULL, NULL, oidc_dir_cfg_path_auth_request_params(r), oidc_dir_cfg_path_scope(r));
+}
+
 /*
  * generic Apache <2.4 authorization hook for this module
  * handles both OpenID Connect and OAuth 2.0 in the same way, based on the claims stored in the request context
@@ -3347,14 +3526,12 @@ int oidc_auth_checker(request_rec *r) {
 	if (id_token)
 		json_decref(id_token);
 
-	if ((rc == HTTP_UNAUTHORIZED) && ap_auth_type(r)
-			&& (apr_strnatcasecmp((const char *) ap_auth_type(r), "oauth20")
-					== 0))
-		oidc_oauth_return_www_authenticate(r, "insufficient_scope",
-				"Different scope(s) or other claims required");
+	if ((rc == HTTP_UNAUTHORIZED) && ap_auth_type(r))
+		rc = oidc_handle_unauthorized_user22(r);
 
 	return rc;
 }
+
 #endif
 
 /*
@@ -3365,7 +3542,7 @@ int oidc_content_handler(request_rec *r) {
 			&auth_openidc_module);
 
 	int rc = DECLINED;
-	if (oidc_util_request_matches_url(r, c->redirect_uri)) {
+	if (oidc_util_request_matches_url(r, oidc_get_redirect_uri(r, c))) {
 
 		if (oidc_util_request_has_parameter(r,
 				OIDC_REDIRECT_URI_REQUEST_INFO)) {
