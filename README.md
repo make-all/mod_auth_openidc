@@ -79,7 +79,7 @@ provider metadata files in a specified metadata directory.
 - [OpenID Connect Session Management](http://openid.net/specs/openid-connect-session-1_0.html). See the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki/Session-Management) for information
 on how to configure it.
 
-Alternatively thos module can operate as an OAuth 2.0 Resource Server to an OAuth 2.0 Authorization Server,
+Alternatively the module can operate as an OAuth 2.0 Resource Server to an OAuth 2.0 Authorization Server,
 introspecting/validating bearer Access Tokens conforming to [OAuth 2.0 Token Introspection](https://tools.ietf.org/html/rfc7662) or similar.
 The `REMOTE_USER` variable setting, passing claims in HTTP headers and authorization based on `Require` primitives
 works in the same way as described for OpenID Connect above. See the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki/OAuth-2.0-Resource-Server) for information
@@ -96,8 +96,7 @@ How to Use It
 Sample configuration for using Google as your OpenID Connect Provider running on
 `www.example.com` and `https://www.example.com/example/redirect_uri` registered
 as the *redirect_uri* for the client through the Google API Console. You will also
-have to enable the `Google+ API` under `APIs & auth` in the [Google API console]
-(https://console.developers.google.com).
+have to enable the `Google+ API` under `APIs & auth` in the [Google API console](https://console.developers.google.com).
 
 ```apache
 OIDCProviderMetadataURL https://accounts.google.com/.well-known/openid-configuration
