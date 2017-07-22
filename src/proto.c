@@ -1597,6 +1597,206 @@ static apr_byte_t oidc_proto_validate_token_type(request_rec *r,
 }
 
 /*
+ * setup for an endpoint call without authentication
+ */
+static apr_byte_t oidc_proto_endpoint_auth_none(request_rec *r,
+		const char *client_id, apr_table_t *params) {
+	oidc_debug(r,
+			"no client secret is configured; calling the token endpoint without client authentication; only public clients are supported");
+	apr_table_addn(params, OIDC_PROTO_CLIENT_ID, client_id);
+	return TRUE;
+}
+
+/*
+ * setup for an endpoint call with HTTP Basic authentication
+ */
+static apr_byte_t oidc_proto_endpoint_auth_basic(request_rec *r,
+		const char *client_id, const char *client_secret, char **basic_auth_str) {
+	oidc_debug(r, "enter");
+	if (client_secret == NULL) {
+		oidc_error(r, "no client secret is configured");
+		return FALSE;
+	}
+	*basic_auth_str = apr_psprintf(r->pool, "%s:%s", client_id, client_secret);
+	return TRUE;
+}
+
+/*
+ * setup for an endpoint call with authentication in POST parameters
+ */
+static apr_byte_t oidc_proto_endpoint_auth_post(request_rec *r,
+		const char *client_id, const char *client_secret, apr_table_t *params) {
+	oidc_debug(r, "enter");
+	if (client_secret == NULL) {
+		oidc_error(r, "no client secret is configured");
+		return FALSE;
+	}
+	apr_table_addn(params, OIDC_PROTO_CLIENT_ID, client_id);
+	apr_table_addn(params, OIDC_PROTO_CLIENT_SECRET, client_secret);
+	return TRUE;
+}
+
+#define OIDC_PROTO_ASSERTION_JTI_LEN 16
+
+/*
+ * helper function to create a JWT assertion for endpoint authentication
+ */
+static apr_byte_t oidc_proto_jwt_create(request_rec *r, const char *client_id,
+		const char *audience, oidc_jwt_t **out) {
+
+	*out = oidc_jwt_new(r->pool, TRUE, TRUE);
+	oidc_jwt_t *jwt = *out;
+
+	char *jti = NULL;
+	oidc_proto_generate_random_string(r, &jti, OIDC_PROTO_ASSERTION_JTI_LEN);
+
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_ISS,
+			json_string(client_id));
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_SUB,
+			json_string(client_id));
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_AUD,
+			json_string(audience));
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_JTI,
+			json_string(jti));
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_EXP,
+			json_integer(apr_time_sec(apr_time_now()) + 60));
+	json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_IAT,
+			json_integer(apr_time_sec(apr_time_now())));
+
+	return TRUE;
+}
+
+/*
+ * helper function to add a JWT assertion to the HTTP request as endpoint authentication
+ */
+static apr_byte_t oidc_proto_jwt_sign_and_add(request_rec *r,
+		apr_table_t *params, oidc_jwt_t *jwt, oidc_jwk_t *jwk) {
+	oidc_jose_error_t err;
+
+	if (oidc_jwt_sign(r->pool, jwt, jwk, &err) == FALSE) {
+		oidc_error(r, "signing JWT failed: %s", oidc_jose_e2s(r->pool, err));
+		return FALSE;
+	}
+
+	char *cser = oidc_jwt_serialize(r->pool, jwt, &err);
+	if (cser == NULL) {
+		oidc_error(r, "oidc_jwt_serialize failed: %s",
+				oidc_jose_e2s(r->pool, err));
+		return FALSE;
+	}
+
+	apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION_TYPE,
+			OIDC_PROTO_CLIENT_ASSERTION_TYPE_JWT_BEARER);
+	apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION,
+			apr_pstrdup(r->pool, cser));
+
+	return TRUE;
+}
+
+#define OIDC_PROTO_JWT_ASSERTION_SYMMETRIC_ALG CJOSE_HDR_ALG_HS256
+
+static apr_byte_t oidc_proto_endpoint_auth_client_secret_jwt(request_rec *r,
+		const char *client_id, const char *client_secret, const char *audience,
+		apr_table_t *params) {
+	oidc_jwt_t *jwt = NULL;
+	oidc_jose_error_t err;
+
+	oidc_debug(r, "enter");
+
+	if (oidc_proto_jwt_create(r, client_id, audience, &jwt) == FALSE)
+		return FALSE;
+
+	oidc_jwk_t *jwk = oidc_jwk_create_symmetric_key(r->pool, NULL,
+			(const unsigned char *) client_secret, strlen(client_secret), FALSE,
+			&err);
+	if (jwk == NULL) {
+		oidc_error(r, "parsing of client secret into JWK failed: %s",
+				oidc_jose_e2s(r->pool, err));
+		oidc_jwt_destroy(jwt);
+		return FALSE;
+	}
+
+	jwt->header.alg = apr_pstrdup(r->pool,
+			OIDC_PROTO_JWT_ASSERTION_SYMMETRIC_ALG);
+
+	oidc_proto_jwt_sign_and_add(r, params, jwt, jwk);
+
+	oidc_jwt_destroy(jwt);
+	oidc_jwk_destroy(jwk);
+
+	return TRUE;
+}
+
+#define OIDC_PROTO_JWT_ASSERTION_ASYMMETRIC_ALG CJOSE_HDR_ALG_RS256
+
+static apr_byte_t oidc_proto_endpoint_auth_private_key_jwt(request_rec *r,
+		oidc_cfg *cfg, const char *client_id, const char *audience,
+		apr_table_t *params) {
+	oidc_jwt_t *jwt = NULL;
+	oidc_jwk_t *jwk = NULL;
+
+	oidc_debug(r, "enter");
+
+	if (oidc_proto_jwt_create(r, client_id, audience, &jwt) == FALSE)
+		return FALSE;
+
+	if (cfg->private_keys == NULL) {
+		oidc_error(r,
+				"no private keys have been configured to use for private_key_jwt client authentication (OIDCPrivateKeyFiles)");
+		oidc_jwt_destroy(jwt);
+		return FALSE;
+	}
+
+	apr_ssize_t klen = 0;
+	apr_hash_index_t *hi = apr_hash_first(r->pool, cfg->private_keys);
+	apr_hash_this(hi, (const void **) &jwt->header.kid, &klen, (void **) &jwk);
+
+	jwt->header.alg = apr_pstrdup(r->pool, CJOSE_HDR_ALG_RS256);
+
+	oidc_proto_jwt_sign_and_add(r, params, jwt, jwk);
+
+	oidc_jwt_destroy(jwt);
+
+	return TRUE;
+}
+
+apr_byte_t oidc_proto_token_endpoint_auth(request_rec *r, oidc_cfg *cfg,
+		const char *token_endpoint_auth, const char *client_id,
+		const char *client_secret, const char *audience, apr_table_t *params,
+		char **basic_auth_str) {
+
+	oidc_debug(r, "token_endpoint_auth=%s", token_endpoint_auth);
+
+	// we assume the default is client_secret_basic unless no secret is set
+	if ((token_endpoint_auth == NULL) && (client_secret == NULL))
+		return oidc_proto_endpoint_auth_none(r, client_id, params);
+
+	if ((token_endpoint_auth == NULL) || (apr_strnatcmp(token_endpoint_auth,
+			OIDC_PROTO_CLIENT_SECRET_BASIC) == 0))
+		return oidc_proto_endpoint_auth_basic(r, client_id, client_secret,
+				basic_auth_str);
+
+	if (apr_strnatcmp(token_endpoint_auth,
+			OIDC_PROTO_CLIENT_SECRET_POST) == 0)
+		return oidc_proto_endpoint_auth_post(r, client_id, client_secret,
+				params);
+
+	if (apr_strnatcmp(token_endpoint_auth,
+			OIDC_PROTO_CLIENT_SECRET_JWT) == 0)
+		return oidc_proto_endpoint_auth_client_secret_jwt(r, client_id,
+				client_secret, audience, params);
+
+	if (apr_strnatcmp(token_endpoint_auth,
+			OIDC_PROTO_PRIVATE_KEY_JWT) == 0)
+		return oidc_proto_endpoint_auth_private_key_jwt(r, cfg, client_id,
+				audience, params);
+
+	oidc_error(r, "uhm, shouldn't be here...");
+
+	return FALSE;
+}
+
+/*
  * send a code/refresh request to the token endpoint and return the parsed contents
  */
 static apr_byte_t oidc_proto_token_endpoint_request(request_rec *r,
@@ -1605,114 +1805,13 @@ static apr_byte_t oidc_proto_token_endpoint_request(request_rec *r,
 		int *expires_in, char **refresh_token) {
 
 	char *response = NULL;
-	const char *basic_auth = NULL;
+	char *basic_auth = NULL;
 
-	oidc_debug(r, "token_endpoint_auth=%s", provider->token_endpoint_auth);
-
-	if (provider->client_secret != NULL) {
-		/* see if we need to do basic auth or auth-through-post-params (both applied through the HTTP POST method though) */
-		if ((provider->token_endpoint_auth == NULL)
-				|| (apr_strnatcmp(provider->token_endpoint_auth,
-						OIDC_PROTO_CLIENT_SECRET_BASIC) == 0)) {
-			basic_auth = apr_psprintf(r->pool, "%s:%s", provider->client_id,
-					provider->client_secret);
-		} else if ((provider->token_endpoint_auth != NULL)
-				&& ((apr_strnatcmp(provider->token_endpoint_auth,
-						OIDC_PROTO_CLIENT_SECRET_JWT) == 0)
-						|| (apr_strnatcmp(provider->token_endpoint_auth,
-								OIDC_PROTO_PRIVATE_KEY_JWT) == 0))) {
-
-			// TODO: factor out somewhere else
-			oidc_jwt_t *jwt = oidc_jwt_new(r->pool, TRUE, TRUE);
-
-			char *jti = NULL;
-			oidc_proto_generate_random_string(r, &jti, 16);
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_ISS,
-					json_string(provider->client_id));
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_SUB,
-					json_string(provider->client_id));
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_AUD,
-					json_string(provider->token_endpoint_url));
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_JTI,
-					json_string(jti));
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_EXP,
-					json_integer(apr_time_sec(apr_time_now()) + 60));
-			json_object_set_new(jwt->payload.value.json, OIDC_CLAIM_IAT,
-					json_integer(apr_time_sec(apr_time_now())));
-
-			oidc_jwk_t *jwk = NULL;
-			oidc_jose_error_t err;
-			int jwk_needs_destroy = 0;
-
-			if (apr_strnatcmp(provider->token_endpoint_auth,
-					OIDC_PROTO_CLIENT_SECRET_JWT) == 0) {
-
-				jwk = oidc_jwk_create_symmetric_key(r->pool, NULL,
-						(const unsigned char *) provider->client_secret,
-						strlen(provider->client_secret), FALSE, &err);
-				if (jwk == NULL) {
-					oidc_error(r,
-							"parsing of client secret into JWK failed: %s",
-							oidc_jose_e2s(r->pool, err));
-					oidc_jwt_destroy(jwt);
-					return FALSE;
-				}
-				jwk_needs_destroy = 1;
-				jwt->header.alg = apr_pstrdup(r->pool, "HS256");
-
-			} else {
-
-				if (cfg->private_keys == NULL) {
-					oidc_error(r,
-							"no private keys have been configured to use for private_key_jwt client authentication (OIDCPrivateKeyFiles)");
-					oidc_jwt_destroy(jwt);
-					return FALSE;
-				}
-
-				apr_ssize_t klen = 0;
-				apr_hash_index_t *hi = apr_hash_first(r->pool,
-						cfg->private_keys);
-				apr_hash_this(hi, (const void **) &jwt->header.kid, &klen,
-						(void **) &jwk);
-				jwk_needs_destroy = 0;
-
-				jwt->header.alg = apr_pstrdup(r->pool, "RS256");
-			}
-
-			if (oidc_jwt_sign(r->pool, jwt, jwk, &err) == FALSE) {
-				oidc_error(r, "signing JWT failed: %s",
-						oidc_jose_e2s(r->pool, err));
-				oidc_jwt_destroy(jwt);
-				return FALSE;
-			}
-
-			apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION_TYPE,
-					OIDC_PROTO_CLIENT_ASSERTION_TYPE_JWT_BEARER);
-
-			char *cser = oidc_jwt_serialize(r->pool, jwt, &err);
-			if (cser != NULL) {
-				apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION,
-						apr_pstrdup(r->pool, cser));
-			} else {
-				oidc_error(r, "oidc_jwt_serialize failed: %s",
-						oidc_jose_e2s(r->pool, err));
-			}
-
-			if (jwk_needs_destroy)
-				oidc_jwk_destroy(jwk);
-
-			oidc_jwt_destroy(jwt);
-
-		} else {
-			apr_table_addn(params, OIDC_PROTO_CLIENT_ID, provider->client_id);
-			apr_table_addn(params, OIDC_PROTO_CLIENT_SECRET,
-					provider->client_secret);
-		}
-	} else {
-		oidc_debug(r,
-				"no client secret is configured; calling the token endpoint without client authentication; only public clients are supported");
-		apr_table_addn(params, OIDC_PROTO_CLIENT_ID, provider->client_id);
-	}
+	/* add the token endpoint authentication credentials */
+	if (oidc_proto_token_endpoint_auth(r, cfg, provider->token_endpoint_auth,
+			provider->client_id, provider->client_secret,
+			provider->token_endpoint_url, params, &basic_auth) == FALSE)
+		return FALSE;
 
 	/* add any configured extra static parameters to the token endpoint */
 	oidc_util_table_add_query_encoded_params(r->pool, params,
