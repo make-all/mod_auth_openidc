@@ -388,34 +388,58 @@ static const char *oidc_get_current_url_scheme(const request_rec *r) {
  */
 static const char *oidc_get_current_url_port(const request_rec *r,
 		const char *scheme_str) {
-	/* first see if there's a proxy/load-balancer in front of us */
+
+	/*
+	 * first see if there's a proxy/load-balancer in front of us
+	 * that sets X-Forwarded-Port
+	 */
 	const char *port_str = oidc_util_hdr_in_x_forwarded_port_get(r);
-	if (port_str == NULL) {
-		/* see if we can get the port from the "X-Forwarded-Host" header */
-		const char *host_hdr = oidc_util_hdr_in_x_forwarded_host_get(r);
-		if (host_hdr) {
-			port_str = strchr(host_hdr, OIDC_CHAR_COLON);
-			if (port_str)
-				port_str++;
-		} else {
-			host_hdr = oidc_util_hdr_in_host_get(r);
-			if (host_hdr)
-				port_str = strchr(host_hdr, OIDC_CHAR_COLON);
-			if (port_str == NULL) {
-				/* if no port was set in the Host header we'll determine it locally */
-				const apr_port_t port = r->connection->local_addr->port;
-				apr_byte_t print_port = TRUE;
-				if ((apr_strnatcmp(scheme_str, "https") == 0) && port == 443)
-					print_port = FALSE;
-				else if ((apr_strnatcmp(scheme_str, "http") == 0) && port == 80)
-					print_port = FALSE;
-				if (print_port)
-					port_str = apr_psprintf(r->pool, "%u", port);
-			} else {
-				port_str++;
-			}
+	if (port_str)
+		return port_str;
+
+	/*
+	 * see if we can get the port from the "X-Forwarded-Host" header
+	 * and if that header was set we'll assume defaults
+	 */
+	const char *host_hdr = oidc_util_hdr_in_x_forwarded_host_get(r);
+	if (host_hdr) {
+		port_str = strchr(host_hdr, OIDC_CHAR_COLON);
+		if (port_str)
+			port_str++;
+		return port_str;
+	}
+
+	/*
+	 * see if we can get the port from the "Host" header; if not
+	 * we'll determine the port locally
+	 */
+	host_hdr = oidc_util_hdr_in_host_get(r);
+	if (host_hdr) {
+		port_str = strchr(host_hdr, OIDC_CHAR_COLON);
+		if (port_str) {
+			port_str++;
+			return port_str;
 		}
 	}
+
+	/*
+	 * if X-Forwarded-Proto assume the default port otherwise the
+	 * port should have been set in the X-Forwarded-Port header
+	 */
+	if (oidc_util_hdr_in_x_forwarded_proto_get(r))
+		return NULL;
+
+	/*
+	 * if no port was set in the Host header and no X-Forwarded-Proto was set, we'll
+	 * determine the port locally and don't print it when it's the default for the protocol
+	 */
+	const apr_port_t port = r->connection->local_addr->port;
+	if ((apr_strnatcmp(scheme_str, "https") == 0) && port == 443)
+		return NULL;
+	else if ((apr_strnatcmp(scheme_str, "http") == 0) && port == 80)
+		return NULL;
+
+	port_str = apr_psprintf(r->pool, "%u", port);
 	return port_str;
 }
 
@@ -544,11 +568,11 @@ static int oidc_util_http_add_form_url_encoded_param(void* rec, const char* key,
 		const char* value) {
 	oidc_http_encode_t *ctx = (oidc_http_encode_t*) rec;
 	oidc_debug(ctx->r, "processing: %s=%s", key, value);
-	const char *sep =
-			apr_strnatcmp(ctx->encoded_params, "") == 0 ? "" : OIDC_STR_AMP;
+	const char *sep = ctx->encoded_params ? OIDC_STR_AMP : "";
 	ctx->encoded_params = apr_psprintf(ctx->r->pool, "%s%s%s=%s",
-			ctx->encoded_params, sep, oidc_util_escape_string(ctx->r, key),
-			oidc_util_escape_string(ctx->r, value));
+			ctx->encoded_params ? ctx->encoded_params : "", sep,
+					oidc_util_escape_string(ctx->r, key),
+					oidc_util_escape_string(ctx->r, value));
 	return 1;
 }
 
@@ -559,14 +583,16 @@ char *oidc_util_http_query_encoded_url(request_rec *r, const char *url,
 		const apr_table_t *params) {
 	char *result = NULL;
 	if ((params != NULL) && (apr_table_elts(params)->nelts > 0)) {
-		oidc_http_encode_t data = { r, "" };
+		oidc_http_encode_t data = { r, NULL };
 		apr_table_do(oidc_util_http_add_form_url_encoded_param, &data, params,
 				NULL);
-		const char *sep =
-				strchr(url, OIDC_CHAR_QUERY) != NULL ?
-						OIDC_STR_AMP :
-						OIDC_STR_QUERY;
-		result = apr_psprintf(r->pool, "%s%s%s", url, sep, data.encoded_params);
+		const char *sep = NULL;
+		if (data.encoded_params)
+			sep = strchr(url, OIDC_CHAR_QUERY) != NULL ?
+					OIDC_STR_AMP :
+					OIDC_STR_QUERY;
+		result = apr_psprintf(r->pool, "%s%s%s", url, sep ? sep : "",
+				data.encoded_params ? data.encoded_params : "");
 	} else {
 		result = apr_pstrdup(r->pool, url);
 	}
@@ -581,7 +607,7 @@ static char *oidc_util_http_form_encoded_data(request_rec *r,
 		const apr_table_t *params) {
 	char *data = NULL;
 	if ((params != NULL) && (apr_table_elts(params)->nelts > 0)) {
-		oidc_http_encode_t encode_data = { r, "" };
+		oidc_http_encode_t encode_data = { r, NULL };
 		apr_table_do(oidc_util_http_add_form_url_encoded_param, &encode_data,
 				params,
 				NULL);
@@ -1832,7 +1858,7 @@ void oidc_util_table_add_query_encoded_params(apr_pool_t *pool,
 			key = ap_getword(pool, &val, OIDC_CHAR_EQUAL);
 			ap_unescape_url((char *) key);
 			ap_unescape_url((char *) val);
-			apr_table_addn(table, key, val);
+			apr_table_add(table, key, val);
 		}
 	}
 }

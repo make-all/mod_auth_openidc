@@ -1921,7 +1921,7 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 	}
 
 	ap_log_error(APLOG_MARK, APLOG_INFO, 0, s,
-			"%s - init - cjose %s, %s, EC=%s, GCM=%s, Redis=%s",
+			"%s - init - cjose %s, %s, EC=%s, GCM=%s, Redis=%s, JQ=%s",
 			NAMEVERSION,
 			cjose_version(),
 			OPENSSL_VERSION_TEXT,
@@ -1932,7 +1932,13 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 #else
 			"no"
 #endif
-			);
+			,
+#ifdef USE_LIBJQ
+			"yes"
+#else
+			"no"
+#endif
+	);
 
 	curl_global_init(CURL_GLOBAL_ALL);
 	OpenSSL_add_all_digests();

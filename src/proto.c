@@ -62,7 +62,7 @@
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
 /*
- * generate a random value (nonce) to correlate request/response through browser state
+ * generate a random string value value of a specified length
  */
 static apr_byte_t oidc_proto_generate_random_string(request_rec *r,
 		char **output, int len) {
@@ -79,7 +79,12 @@ static apr_byte_t oidc_proto_generate_random_string(request_rec *r,
 	return TRUE;
 }
 
-static apr_byte_t oidc_proto_copy_param_from_request(
+/*
+ * indicates wether a request parameter from the authorization request needs to be
+ * copied to the protected request object based on the settings specified in the
+ * "copy_from_request" JSON array in the request object
+ */
+static apr_byte_t oidc_proto_param_needs_copy(
 		json_t *request_object_config, const char *parameter_name) {
 	json_t *copy_from_request = json_object_get(request_object_config,
 			"copy_from_request");
@@ -103,7 +108,8 @@ typedef struct oidc_proto_copy_req_ctx_t {
 } oidc_proto_copy_req_ctx_t;
 
 /*
- * add a key/value pair post parameter
+ * copy a parameter key/value from the authorizion request to the
+ * request object if the configuration setting says to include it
  */
 static int oidc_proto_copy_from_request(void* rec, const char* name,
 		const char* value) {
@@ -111,12 +117,12 @@ static int oidc_proto_copy_from_request(void* rec, const char* name,
 
 	oidc_debug(ctx->r, "processing name: %s, value: %s", name, value);
 
-	if (oidc_proto_copy_param_from_request(ctx->request_object_config, name)) {
+	if (oidc_proto_param_needs_copy(ctx->request_object_config, name)) {
 		json_t *result = NULL;
 		json_error_t json_error;
 		result = json_loads(value, JSON_DECODE_ANY, &json_error);
 		if (result == NULL)
-			// assume string
+			/* assume string */
 			result = json_string(value);
 		if (result) {
 			json_object_set_new(ctx->request_object->payload.value.json, name,
@@ -128,6 +134,9 @@ static int oidc_proto_copy_from_request(void* rec, const char* name,
 	return 1;
 }
 
+/*
+ * obtain the public key for a provider to encrypt the request object with
+ */
 apr_byte_t oidc_proto_get_encryption_jwk_by_type(request_rec *r, oidc_cfg *cfg,
 		struct oidc_provider_t *provider, int key_type, oidc_jwk_t **jwk) {
 
@@ -140,6 +149,7 @@ apr_byte_t oidc_proto_get_encryption_jwk_by_type(request_rec *r, oidc_cfg *cfg,
 	oidc_jwk_t *key = NULL;
 	char *jwk_json = NULL;
 
+	/* TODO: forcefully refresh now; we may want to relax that */
 	oidc_metadata_jwks_get(r, cfg, &jwks_uri, &j_jwks, &force_refresh);
 
 	if (j_jwks == NULL) {
@@ -154,6 +164,7 @@ apr_byte_t oidc_proto_get_encryption_jwk_by_type(request_rec *r, oidc_cfg *cfg,
 	}
 
 	int i;
+	/* walk the set of published keys to find the first that has a matching type */
 	for (i = 0; i < json_array_size(keys); i++) {
 
 		json_t *elem = json_array_get(keys, i);
@@ -344,7 +355,7 @@ char *oidc_proto_create_request_object(request_rec *r,
 
 	} else {
 
-		// should be sign only or "none"
+		/* should be sign only or "none" */
 		serialized_request_object = cser;
 	}
 
@@ -363,7 +374,7 @@ char *oidc_proto_create_request_object(request_rec *r,
 /*
  * generate a request object and pass it by reference in the authorization request
  */
-char *oidc_proto_create_request_uri(request_rec *r,
+static char *oidc_proto_create_request_uri(request_rec *r,
 		struct oidc_provider_t *provider, json_t * request_object_config,
 		const char *redirect_uri, apr_table_t *params) {
 
@@ -400,7 +411,7 @@ char *oidc_proto_create_request_uri(request_rec *r,
 /*
  * Generic function to generate request/request_object parameter with value
  */
-char *oidc_proto_add_request_param(request_rec *r,
+static void oidc_proto_add_request_param(request_rec *r,
 		struct oidc_provider_t *provider, const char *redirect_uri,
 		apr_table_t *params) {
 
@@ -408,7 +419,7 @@ char *oidc_proto_add_request_param(request_rec *r,
 	json_t *request_object_config = NULL;
 	if (oidc_util_decode_json_object(r, provider->request_object,
 			&request_object_config) == FALSE)
-		return FALSE;
+		return;
 
 	/* request_uri is used as default parameter for sending Request Object */
 	char* parameter = OIDC_PROTO_REQUEST_URI;
@@ -422,7 +433,7 @@ char *oidc_proto_add_request_param(request_rec *r,
 		if (request_object_type_str == NULL) {
 			oidc_error(r,
 					"Value of request_object_type in request_object config is not a string");
-			return FALSE;
+			return;
 		}
 
 		/* ensure parameter variable to have a valid value */
@@ -432,7 +443,7 @@ char *oidc_proto_add_request_param(request_rec *r,
 				!= 0) {
 			oidc_error(r, "Bad request_object_type in config: %s",
 					request_object_type_str);
-			return FALSE;
+			return;
 		}
 	}
 
@@ -442,20 +453,13 @@ char *oidc_proto_add_request_param(request_rec *r,
 		/* parameter is "request_uri" */
 		value = oidc_proto_create_request_uri(r, provider,
 				request_object_config, redirect_uri, params);
+		apr_table_set(params, OIDC_PROTO_REQUEST_URI, value);
 	} else {
 		/* parameter is "request" */
 		value = oidc_proto_create_request_object(r, provider,
 				request_object_config, params);
+		apr_table_set(params, OIDC_PROTO_REQUEST_OBJECT, value);
 	}
-
-	/* concatenate parameter with value */
-	char* request_param = NULL;
-	if (value != NULL) {
-		request_param = apr_psprintf(r->pool, "%s=%s", parameter,
-				oidc_util_escape_string(r, value));
-	}
-
-	return request_param;
 }
 
 /* context structure for encoding parameters */
@@ -526,7 +530,7 @@ int oidc_proto_authorization_request(request_rec *r,
 	apr_table_t *params = apr_table_make(r->pool, 4);
 
 	/* add the response type */
-	apr_table_addn(params, OIDC_PROTO_RESPONSE_TYPE,
+	apr_table_setn(params, OIDC_PROTO_RESPONSE_TYPE,
 			oidc_proto_state_get_response_type(proto_state));
 
 	/* concat the per-path scopes with the per-provider scopes */
@@ -543,47 +547,47 @@ int oidc_proto_authorization_request(request_rec *r,
 					"the configuration for the \"%s\" parameter does not include the \"%s\" scope, your provider may not return an \"id_token\": %s",
 					OIDC_PROTO_SCOPE, OIDC_PROTO_SCOPE_OPENID, provider->scope);
 		}
-		apr_table_addn(params, OIDC_PROTO_SCOPE, scope);
+		apr_table_setn(params, OIDC_PROTO_SCOPE, scope);
 	}
 
 	/* add the client ID */
-	apr_table_addn(params, OIDC_PROTO_CLIENT_ID, provider->client_id);
+	apr_table_setn(params, OIDC_PROTO_CLIENT_ID, provider->client_id);
 
 	/* add the state */
-	apr_table_addn(params, OIDC_PROTO_STATE, state);
+	apr_table_setn(params, OIDC_PROTO_STATE, state);
 
 	/* add the redirect uri */
-	apr_table_addn(params, OIDC_PROTO_REDIRECT_URI, redirect_uri);
+	apr_table_setn(params, OIDC_PROTO_REDIRECT_URI, redirect_uri);
 
 	/* add the nonce if set */
 	const char *nonce = oidc_proto_state_get_nonce(proto_state);
 	if (nonce != NULL)
-		apr_table_addn(params, OIDC_PROTO_NONCE, nonce);
+		apr_table_setn(params, OIDC_PROTO_NONCE, nonce);
 
 	/* add PKCE code challenge if set */
 	if (code_challenge != NULL) {
-		apr_table_addn(params, OIDC_PROTO_CODE_CHALLENGE, code_challenge);
-		apr_table_addn(params, OIDC_PROTO_CODE_CHALLENGE_METHOD,
+		apr_table_setn(params, OIDC_PROTO_CODE_CHALLENGE, code_challenge);
+		apr_table_setn(params, OIDC_PROTO_CODE_CHALLENGE_METHOD,
 				provider->pkce->method);
 	}
 
 	/* add the response_mode if explicitly set */
 	const char *response_mode = oidc_proto_state_get_response_mode(proto_state);
 	if (response_mode != NULL)
-		apr_table_addn(params, OIDC_PROTO_RESPONSE_MODE, response_mode);
+		apr_table_setn(params, OIDC_PROTO_RESPONSE_MODE, response_mode);
 
 	/* add the login_hint if provided */
 	if (login_hint != NULL)
-		apr_table_addn(params, OIDC_PROTO_LOGIN_HINT, login_hint);
+		apr_table_setn(params, OIDC_PROTO_LOGIN_HINT, login_hint);
 
 	/* add the id_token_hint if provided */
 	if (id_token_hint != NULL)
-		apr_table_addn(params, OIDC_PROTO_ID_TOKEN_HINT, id_token_hint);
+		apr_table_setn(params, OIDC_PROTO_ID_TOKEN_HINT, id_token_hint);
 
 	/* add the prompt setting if provided (e.g. "none" for no-GUI checks) */
 	const char *prompt = oidc_proto_state_get_prompt(proto_state);
 	if (prompt != NULL)
-		apr_table_addn(params, OIDC_PROTO_PROMPT, prompt);
+		apr_table_setn(params, OIDC_PROTO_PROMPT, prompt);
 
 	/* add any statically configured custom authorization request parameters */
 	if (provider->auth_request_params != NULL)
@@ -1637,7 +1641,7 @@ static apr_byte_t oidc_proto_endpoint_auth_none(request_rec *r,
 		const char *client_id, apr_table_t *params) {
 	oidc_debug(r,
 			"no client secret is configured; calling the token endpoint without client authentication; only public clients are supported");
-	apr_table_addn(params, OIDC_PROTO_CLIENT_ID, client_id);
+	apr_table_set(params, OIDC_PROTO_CLIENT_ID, client_id);
 	return TRUE;
 }
 
@@ -1665,8 +1669,8 @@ static apr_byte_t oidc_proto_endpoint_auth_post(request_rec *r,
 		oidc_error(r, "no client secret is configured");
 		return FALSE;
 	}
-	apr_table_addn(params, OIDC_PROTO_CLIENT_ID, client_id);
-	apr_table_addn(params, OIDC_PROTO_CLIENT_SECRET, client_secret);
+	apr_table_set(params, OIDC_PROTO_CLIENT_ID, client_id);
+	apr_table_set(params, OIDC_PROTO_CLIENT_SECRET, client_secret);
 	return TRUE;
 }
 
@@ -1719,10 +1723,9 @@ static apr_byte_t oidc_proto_jwt_sign_and_add(request_rec *r,
 		return FALSE;
 	}
 
-	apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION_TYPE,
+	apr_table_setn(params, OIDC_PROTO_CLIENT_ASSERTION_TYPE,
 			OIDC_PROTO_CLIENT_ASSERTION_TYPE_JWT_BEARER);
-	apr_table_addn(params, OIDC_PROTO_CLIENT_ASSERTION,
-			apr_pstrdup(r->pool, cser));
+	apr_table_set(params, OIDC_PROTO_CLIENT_ASSERTION, cser);
 
 	return TRUE;
 }
@@ -1916,16 +1919,16 @@ static apr_byte_t oidc_proto_resolve_code(request_rec *r, oidc_cfg *cfg,
 
 	/* assemble the parameters for a call to the token endpoint */
 	apr_table_t *params = apr_table_make(r->pool, 5);
-	apr_table_addn(params, OIDC_PROTO_GRANT_TYPE,
+	apr_table_setn(params, OIDC_PROTO_GRANT_TYPE,
 			OIDC_PROTO_GRANT_TYPE_AUTHZ_CODE);
-	apr_table_addn(params, OIDC_PROTO_CODE, code);
-	apr_table_addn(params, OIDC_PROTO_REDIRECT_URI, oidc_get_redirect_uri(r, cfg));
+	apr_table_setn(params, OIDC_PROTO_CODE, code);
+	apr_table_set(params, OIDC_PROTO_REDIRECT_URI, oidc_get_redirect_uri(r, cfg));
 
 	if (code_verifier)
-		apr_table_addn(params, OIDC_PROTO_CODE_VERIFIER, code_verifier);
+		apr_table_setn(params, OIDC_PROTO_CODE_VERIFIER, code_verifier);
 
 	if (state)
-		apr_table_addn(params, OIDC_PROTO_STATE, state);
+		apr_table_setn(params, OIDC_PROTO_STATE, state);
 
 	return oidc_proto_token_endpoint_request(r, cfg, provider, params, id_token,
 			access_token, token_type, expires_in, refresh_token);
@@ -1943,10 +1946,10 @@ apr_byte_t oidc_proto_refresh_request(request_rec *r, oidc_cfg *cfg,
 
 	/* assemble the parameters for a call to the token endpoint */
 	apr_table_t *params = apr_table_make(r->pool, 5);
-	apr_table_addn(params, OIDC_PROTO_GRANT_TYPE,
+	apr_table_setn(params, OIDC_PROTO_GRANT_TYPE,
 			OIDC_PROTO_GRANT_TYPE_REFRESH_TOKEN);
-	apr_table_addn(params, OIDC_PROTO_REFRESH_TOKEN, rtoken);
-	apr_table_addn(params, OIDC_PROTO_SCOPE, provider->scope);
+	apr_table_setn(params, OIDC_PROTO_REFRESH_TOKEN, rtoken);
+	apr_table_setn(params, OIDC_PROTO_SCOPE, provider->scope);
 
 	return oidc_proto_token_endpoint_request(r, cfg, provider, params, id_token,
 			access_token, token_type, expires_in, refresh_token);
@@ -2164,7 +2167,7 @@ apr_byte_t oidc_proto_resolve_userinfo(request_rec *r, oidc_cfg *cfg,
 	} else if (provider->userinfo_token_method
 			== OIDC_USER_INFO_TOKEN_METHOD_POST) {
 		apr_table_t *params = apr_table_make(r->pool, 4);
-		apr_table_addn(params, OIDC_PROTO_ACCESS_TOKEN, access_token);
+		apr_table_setn(params, OIDC_PROTO_ACCESS_TOKEN, access_token);
 		if (oidc_util_http_post_form(r, provider->userinfo_endpoint_url, params,
 				NULL, access_token, provider->ssl_validate_server, response,
 				cfg->http_timeout_long, cfg->outgoing_proxy,
@@ -2217,8 +2220,8 @@ static apr_byte_t oidc_proto_webfinger_discovery(request_rec *r, oidc_cfg *cfg,
 			domain);
 
 	apr_table_t *params = apr_table_make(r->pool, 1);
-	apr_table_addn(params, "resource", resource);
-	apr_table_addn(params, "rel", "http://openid.net/specs/connect/1.0/issuer");
+	apr_table_setn(params, "resource", resource);
+	apr_table_setn(params, "rel", "http://openid.net/specs/connect/1.0/issuer");
 
 	char *response = NULL;
 	if (oidc_util_http_get(r, url, params, NULL, NULL,
@@ -2796,7 +2799,7 @@ static apr_byte_t oidc_proto_resolve_code_and_validate_response(request_rec *r,
 		if (token_type != NULL)
 			apr_table_set(params, OIDC_PROTO_TOKEN_TYPE, token_type);
 		if (expires_in != -1)
-			apr_table_set(params, OIDC_PROTO_EXPIRES_IN,
+			apr_table_setn(params, OIDC_PROTO_EXPIRES_IN,
 					apr_psprintf(r->pool, "%d", expires_in));
 	}
 
