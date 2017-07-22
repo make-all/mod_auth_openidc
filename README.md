@@ -43,10 +43,7 @@ receives user identity information from the OP in a so called ID Token and passe
 > identity information coming from a UserInfo endpoint. In this case, you almost certainly
 > need to set the OIDCOAuthRemoteUserClaim to something that is returned from the
 > UserInfo endpoint.  Some additional options are provided for this case to allow more
-> flexibility in the UserInfo endpoint implementation.  OIDCProviderUserInfoEndpointAuth
-> can be set to "param" to pass the access token as a parameter to the UserInfo endpoint,
-> instead of in an Authorization header. The name of the parameter can be controlled by
-> OIDCProviderUserInfoEndpointParam, default is access_token.
+> flexibility in the UserInfo endpoint implementation.
 > OIDCProviderUserInfoResponseSubkey can be used to extract the claims from an object
 > inside the JSON response, instead of extracting them directly from the response object.
 > This was required to work with Phabricator's user.whoami API method, which returns
@@ -291,7 +288,7 @@ OIDCProviderAuthorizationEndpoint https://phabricator.example.com/oauthserver/au
 OIDCProviderTokenEndpoint https://phabricator.example.com/oauthserver/token/
 OIDCProviderTokenEndpointAuth client_secret_post
 OIDCProviderUserInfoEndpoint https://phabricator.example.com/api/user.whoami
-OIDCProviderUserInfoEndpointAuth param
+OIDCUserInfoTokenMethod post_param
 OIDCProviderUserInfoResponseSubkey result
 OIDCORemoteUserClaim userName
 
