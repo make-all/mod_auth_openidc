@@ -104,12 +104,12 @@ static void oidc_proto_copy_from_request(request_rec *r,
 
 	oidc_debug(r, "processing request: %s", request);
 
-	p = apr_strtok(request, "&", &tokenizer_ctx);
+	p = apr_strtok(request, OIDC_STR_AMP, &tokenizer_ctx);
 	do {
 
 		char *tuple = apr_pstrdup(r->pool, p);
 		oidc_debug(r, "processing tuple: %s", tuple);
-		char *q = strstr(tuple, "=");
+		char *q = strstr(tuple, OIDC_STR_EQUAL);
 
 		if (q) {
 			*q = '\0';
@@ -136,7 +136,7 @@ static void oidc_proto_copy_from_request(request_rec *r,
 			}
 		}
 
-		p = apr_strtok(NULL, "&", &tokenizer_ctx);
+		p = apr_strtok(NULL, OIDC_STR_AMP, &tokenizer_ctx);
 
 	} while (p);
 }
@@ -321,7 +321,7 @@ char *oidc_proto_create_request_object(request_rec *r,
 			break;
 		case CJOSE_JWK_KTY_OCT:
 			oidc_util_create_symmetric_key(r, provider->client_secret,
-					oidc_alg2keysize(jwe->header.alg), "sha256", FALSE, &jwk);
+					oidc_alg2keysize(jwe->header.alg), OIDC_JOSE_ALG_SHA256, FALSE, &jwk);
 			break;
 		default:
 			oidc_error(r,
@@ -482,8 +482,8 @@ int oidc_proto_authorization_request(request_rec *r,
 	/* assemble the full URL as the authorization request to the OP where we want to redirect to */
 	char *authorization_request = apr_psprintf(r->pool, "%s%s",
 			provider->authorization_endpoint_url,
-			strchr(provider->authorization_endpoint_url, '?') != NULL ?
-					"&" : "?");
+			strchr(provider->authorization_endpoint_url, OIDC_CHAR_QUERY) != NULL ?
+					OIDC_STR_AMP : "?");
 	authorization_request = apr_psprintf(r->pool, "%s%s=%s",
 			authorization_request,
 			OIDC_PROTO_RESPONSE_TYPE,
@@ -494,7 +494,7 @@ int oidc_proto_authorization_request(request_rec *r,
 	const char *scope = provider->scope;
 	if (path_scope != NULL)
 		scope = ((scope != NULL) && (apr_strnatcmp(scope, "") != 0)) ?
-				apr_pstrcat(r->pool, scope, " ", path_scope, NULL) : path_scope;
+				apr_pstrcat(r->pool, scope, OIDC_STR_SPACE, path_scope, NULL) : path_scope;
 
 	if (scope != NULL) {
 		if (!oidc_util_spaced_string_contains(r->pool, scope,
@@ -675,7 +675,7 @@ static apr_byte_t oidc_proto_pkce_state_s256(request_rec *r, char **state) {
  */
 static apr_byte_t oidc_proto_pkce_challenge_s256(request_rec *r,
 		const char *state, char **code_challenge) {
-	if (oidc_util_hash_string_and_base64url_encode(r, "sha256", state,
+	if (oidc_util_hash_string_and_base64url_encode(r, OIDC_JOSE_ALG_SHA256, state,
 			code_challenge) == FALSE) {
 		oidc_error(r,
 				"oidc_util_hash_string_and_base64url_encode returned an error for the code verifier");
@@ -1075,7 +1075,7 @@ static apr_byte_t oidc_proto_validate_cnf(request_rec *r, oidc_cfg *cfg,
 		return FALSE;
 	}
 
-	if (oidc_jose_hash_bytes(r->pool, "sha256", (const unsigned char *) tbp,
+	if (oidc_jose_hash_bytes(r->pool, OIDC_JOSE_ALG_SHA256, (const unsigned char *) tbp,
 			tbp_len, &tbp_hash, &tbp_hash_len, NULL) == FALSE) {
 		oidc_warn(r,
 				"hashing Provided Token Binding ID environment variable failed");
@@ -1517,7 +1517,7 @@ apr_byte_t oidc_proto_parse_idtoken(request_rec *r, oidc_cfg *cfg,
 	oidc_jose_error_t err;
 	oidc_jwk_t *jwk = NULL;
 	if (oidc_util_create_symmetric_key(r, provider->client_secret,
-			oidc_alg2keysize(alg), "sha256",
+			oidc_alg2keysize(alg), OIDC_JOSE_ALG_SHA256,
 			TRUE, &jwk) == FALSE)
 		return FALSE;
 
@@ -1843,7 +1843,7 @@ static apr_byte_t oidc_user_info_response_validate(request_rec *r,
 	char *payload = NULL;
 
 	if (oidc_util_create_symmetric_key(r, provider->client_secret,
-			oidc_alg2keysize(alg), "sha256",
+			oidc_alg2keysize(alg), OIDC_JOSE_ALG_SHA256,
 			TRUE, &jwk) == FALSE)
 		return FALSE;
 
@@ -2158,7 +2158,7 @@ apr_byte_t oidc_proto_account_based_discovery(request_rec *r, oidc_cfg *cfg,
 	oidc_debug(r, "enter, acct=%s", acct);
 
 	const char *resource = apr_psprintf(r->pool, "acct:%s", acct);
-	const char *domain = strrchr(acct, '@');
+	const char *domain = strrchr(acct, OIDC_CHAR_AT);
 	if (domain == NULL) {
 		oidc_error(r, "invalid account name");
 		return FALSE;

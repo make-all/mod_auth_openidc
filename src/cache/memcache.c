@@ -103,10 +103,10 @@ static int oidc_cache_memcache_post_config(server_rec *s) {
 
 	/* loop over the provided memcache servers to find out the number of servers configured */
 	char *cache_config = apr_pstrdup(p, cfg->cache_memcache_servers);
-	split = apr_strtok(cache_config, " ", &tok);
+	split = apr_strtok(cache_config, OIDC_STR_SPACE, &tok);
 	while (split) {
 		nservers++;
-		split = apr_strtok(NULL, " ", &tok);
+		split = apr_strtok(NULL, OIDC_STR_SPACE, &tok);
 	}
 
 	/* allocated space for the number of servers */
@@ -119,7 +119,7 @@ static int oidc_cache_memcache_post_config(server_rec *s) {
 
 	/* loop again over the provided servers */
 	cache_config = apr_pstrdup(p, cfg->cache_memcache_servers);
-	split = apr_strtok(cache_config, " ", &tok);
+	split = apr_strtok(cache_config, OIDC_STR_SPACE, &tok);
 	while (split) {
 		apr_memcache_server_t* st;
 		char* host_str;
@@ -160,7 +160,7 @@ static int oidc_cache_memcache_post_config(server_rec *s) {
 		}
 
 		/* go to the next entry */
-		split = apr_strtok(NULL, " ", &tok);
+		split = apr_strtok(NULL, OIDC_STR_SPACE, &tok);
 	}
 
 	return OK;
@@ -204,8 +204,6 @@ static apr_byte_t oidc_cache_memcache_status(request_rec *r, oidc_cache_cfg_memc
  */
 static apr_byte_t oidc_cache_memcache_get(request_rec *r, const char *section,
 		const char *key, const char **value) {
-
-	oidc_debug(r, "enter, section=\"%s\", key=\"%s\"", section, key);
 
 	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
@@ -260,8 +258,6 @@ static apr_byte_t oidc_cache_memcache_get(request_rec *r, const char *section,
 static apr_byte_t oidc_cache_memcache_set(request_rec *r, const char *section,
 		const char *key, const char *value, apr_time_t expiry) {
 
-	oidc_debug(r, "enter, section=\"%s\", key=\"%s\"", section, key);
-
 	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 	oidc_cache_cfg_memcache_t *context =
@@ -302,6 +298,7 @@ static apr_byte_t oidc_cache_memcache_set(request_rec *r, const char *section,
 }
 
 oidc_cache_t oidc_cache_memcache = {
+		"memcache",
 		1,
 		oidc_cache_memcache_post_config,
 		NULL,

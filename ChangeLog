@@ -1,3 +1,14 @@
+06/07/2017
+- fix file cache backend: allow caching of non-filename friendly keys such as configuration URLs and JWKs URIs
+- enable JQ-based claims expression matching when compiled from source with --with-jq=<dir>, e.g.:
+  Require claims_expr '.aud == "ac_oic_client" and (.scope | index("profile") != null)'
+- normalize cache backend logging
+- bump to 2.3.0rc3
+
+06/06/2017
+- avoid cleaning our own state cookie twice when it is expired
+- bump to 2.3.0rc2
+
 06/02/2017
 - refactor remote user handling so it allows for postfixing with the issuer value after applying the regex
 - bump to 2.3.0rc1
