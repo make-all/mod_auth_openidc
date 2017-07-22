@@ -3,10 +3,10 @@ Upstream [![Build Status](https://travis-ci.org/pingidentity/mod_auth_openidc.sv
 mod_auth_openidc
 ================
 
-**mod_auth_openidc** is an authentication/authorization module for the Apache 2.x
-HTTP server that authenticates users against an OpenID Connect Provider. It can also
-function as an OAuth 2.0 Resource Server, validating access tokens presented by
-OAuth 2.0 clients against an OAuth 2.0 Authorization Server.
+*mod_auth_openidc* is an authentication/authorization module for the Apache 2.x
+HTTP server that functions as an **OpenID Connect Relying Party**, authenticating users against an
+OpenID Connect Provider. It can also function as an **OAuth 2.0 Resource Server**, validating 
+OAuth 2.0 access tokens presented by OAuth 2.0 Clients.
 
 > This version of the module can also authenticate against an OAuth2.0
 > server using the Code Authorization Grant flow and a UserInfo
@@ -33,65 +33,56 @@ OAuth 2.0 clients against an OAuth 2.0 Authorization Server.
 Overview
 --------
 
-This module enables an Apache 2.x web server to operate as an [OpenID Connect]
-(http://openid.net/specs/openid-connect-core-1_0.html) *Relying Party* (RP) to an
-OpenID Connect *Provider* (OP). It authenticates users against an OpenID Connect Provider,
-receives user identity information from the OP in a so called ID Token and passes the
-identity information (a.k.a. claims) in the ID Token to applications hosted and protected
-by the Apache web server.
+This module enables an Apache 2.x web server to operate as an [OpenID Connect](http://openid.net/specs/openid-connect-core-1_0.html)
+*Relying Party* (RP) to an OpenID Connect *Provider* (OP). It authenticates users against an OpenID Connect Provider,
+receives user identity information from the OP in a so called ID Token and passes the identity information
+(a.k.a. claims) in the ID Token to applications hosted and protected by the Apache web server.
 
-If the server is a non-OpenID Connect server that implements the OAuth 2.0 Code
-Authorization Grant flow, the authentication can still be performed, with all user
-identity information coming from a UserInfo endpoint. In this case, you almost certainly
-need to set the OIDCOAuthRemoteUserClaim to something that is returned from the
-UserInfo endpoint.  Some additional options are provided for this case to allow more
-flexibility in the UserInfo endpoint implementation.  OIDCProviderUserInfoEndpointAuth
-can be set to "param" to pass the access token as a parameter to the UserInfo endpoint,
-instead of in an Authorization header. The name of the parameter can be controlled by
-OIDCProviderUserInfoEndpointParam, default is access_token.
-OIDCProviderUserInfoResponseSubkey can be used to extract the claims from an object
-inside the JSON response, instead of extracting them directly from the response object.
-This was required to work with Phabricator's user.whoami API method, which returns
-user information inside a "result" object.
+> If the server is a non-OpenID Connect server that implements the OAuth 2.0 Code
+> Authorization Grant flow, the authentication can still be performed, with all user
+> identity information coming from a UserInfo endpoint. In this case, you almost certainly
+> need to set the OIDCOAuthRemoteUserClaim to something that is returned from the
+> UserInfo endpoint.  Some additional options are provided for this case to allow more
+> flexibility in the UserInfo endpoint implementation.  OIDCProviderUserInfoEndpointAuth
+> can be set to "param" to pass the access token as a parameter to the UserInfo endpoint,
+> instead of in an Authorization header. The name of the parameter can be controlled by
+> OIDCProviderUserInfoEndpointParam, default is access_token.
+> OIDCProviderUserInfoResponseSubkey can be used to extract the claims from an object
+> inside the JSON response, instead of extracting them directly from the response object.
+> This was required to work with Phabricator's user.whoami API method, which returns
+> user information inside a "result" object.
 
-It can also be configured as an OAuth 2.0 Resource Server, consuming bearer access
-tokens and introspecting/validating them against a token introspection endpoint of an
-OAuth 2.0 Authorization Server, authorizing clients based on the introspection results.
+It can also be configured as an OAuth 2.0 *Resource Server* (RS), consuming bearer access tokens and introspecting/validating
+them against a token introspection endpoint of an OAuth 2.0 Authorization Server and authorizing the Clients based on the
+introspection results.
 
-The protected content and/or applications can be served by the Apache server
-itself or it can be served from elsewhere when Apache is configured as a reverse
-proxy in front of the origin server(s).
+The protected content and/or applications can be served by the Apache server itself or it can be served from elsewhere
+when Apache is configured as a Reverse Proxy in front of the origin server(s).
 
-By default the module sets the `REMOTE_USER` variable to the `id_token` `[sub]` claim,
-concatenated with the OP's Issuer identifier (`[sub]@[iss]`). Other `id_token`
-claims are passed in HTTP headers together with those (optionally) obtained from
-the UserInfo endpoint.
+By default the module sets the `REMOTE_USER` variable to the `id_token` `[sub]` claim, concatenated with the OP's Issuer
+identifier (`[sub]@[iss]`). Other `id_token` claims are passed in HTTP headers and/or environment variables together with those
+(optionally) obtained from the UserInfo endpoint.
 
-It allows for authorization rules (based on standard Apache `Require` primitives)
-that can be matched against the set of claims provided in the `id_token`/
-`userinfo` claims.
+It allows for authorization rules (based on standard Apache `Require` primitives) that can be matched against the set
+of claims provided in the `id_token`/ `userinfo` claims.
 
-This module supports all defined OpenID Connect flows, including *Basic Client Profile*,
-*Implicit Client Profile*, *Hybrid Flows* and the *Refresh Flow*. It supports connecting
-to multiple OpenID Connect Providers through reading/writing provider metadata files
-in a specified metadata directory.
+This module supports all defined OpenID Connect flows, including *Basic Client Profile*, *Implicit Client Profile*,
+*Hybrid Flows* and the *Refresh Flow*. It supports connecting to multiple OpenID Connect Providers through reading/writing
+provider metadata files in a specified metadata directory.
 
-It supports [OpenID Connect Dynamic Client Registration]
-(http://openid.net/specs/openid-connect-registration-1_0.html), [OpenID Provider
-Discovery] (http://openid.net/specs/openid-connect-discovery-1_0.html) through domain
-or account names and [OAuth 2.0 Form Post Response Mode]
-(http://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html).
-It also supports [OpenID Connect Session Management]
-(http://openid.net/specs/openid-connect-session-1_0.html). See the [Wiki]
-(https://github.com/pingidentity/mod_auth_openidc/wiki/Session-Management) for information
+*mod_auth_openidc* supports the following specifications:
+- [OpenID Connect](http://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Dynamic Client Registration](http://openid.net/specs/openid-connect-registration-1_0.html)
+- [OpenID Provider Discovery](http://openid.net/specs/openid-connect-discovery-1_0.html)
+- [OAuth 2.0 Form Post Response Mode](http://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html)
+- [Proof Key for Code Exchange by OAuth Public Clients](https://tools.ietf.org/html/rfc7636)
+- [OpenID Connect Session Management](http://openid.net/specs/openid-connect-session-1_0.html). See the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki/Session-Management) for information
 on how to configure it.
 
-Additionally it can operate as an OAuth 2.0 Resource Server to an OAuth 2.0 Authorization Server,
-introspecting/validating bearer Access Tokens conforming to [OAuth Token Introspection]
-(https://tools.ietf.org/html/draft-ietf-oauth-introspection-05) or similar. The `REMOTE_USER`
-variable setting, passing claims in HTTP headers and authorization based on Require primitives
-works in the same way as described for OpenID Connect above. See the [Wiki]
-(https://github.com/pingidentity/mod_auth_openidc/wiki/OAuth-2.0-Resource-Server) for information
+Alternatively thos module can operate as an OAuth 2.0 Resource Server to an OAuth 2.0 Authorization Server,
+introspecting/validating bearer Access Tokens conforming to [OAuth 2.0 Token Introspection](https://tools.ietf.org/html/rfc7662) or similar.
+The `REMOTE_USER` variable setting, passing claims in HTTP headers and authorization based on `Require` primitives
+works in the same way as described for OpenID Connect above. See the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki/OAuth-2.0-Resource-Server) for information
 on how to configure it.
 
 For an exhaustive description of all configuration options, see the file `auth_openidc.conf`
@@ -133,30 +124,7 @@ Require claim hd:<your-domain>
 ```
 
 The above is an authorization example of an exact match of a provided claim against a string value.
-For more authorization options see the [Wiki page on Authorization] (https://github.com/pingidentity/mod_auth_openidc/wiki/Authorization).
-
-### Access Control with Google OAuth 2.0
-
-Sample configuration where **mod_auth_openidc** acts as an OAuth 2.0 Resource Server using Google as the
-Authorization Server. This allows us to expose protected resources only to (non-browser/in-browser/native) clients
-that are able to present a valid access token obtained from Google. **mod_auth_openidc** will validate the
-`access_token` against Google's token info endpoint and use the claims returned in the response for
-authorization purposes. The following configuration allows access only to a specific client:
-
-```apache
-OIDCOAuthIntrospectionEndpoint https://www.googleapis.com/oauth2/v1/tokeninfo
-OIDCOAuthIntrospectionTokenParamName access_token
-OIDCOAuthRemoteUserClaim user_id
-
-<Location /example/api/v2/>
-    Authtype oauth20
-    Require claim issued_to:412063239660.apps.googleusercontent.com
-</Location>
-```
-
-Note that this is not an OpenID Connect SSO scenario where users are authenticated but rather a "pure" OAuth 2.0
-scenario where **mod_auth_openidc** is the OAuth 2.0 Resource Server instead of the RP/client. How the actual
-client accessing the protected resources got its access token is not relevant to this Apache Resource Server setup.
+For more authorization options see the [Wiki page on Authorization](https://github.com/pingidentity/mod_auth_openidc/wiki/Authorization).
 
 ### OpenID Connect SSO with multiple OpenID Connect Providers
 
@@ -184,7 +152,7 @@ filename is `localhost%3A9031.client`:
         }
 
 3. `<urlencoded-issuer-value-with-https-prefix-and-trailing-slash-stripped>.conf`  
-contains **mod_auth_openidc** specific custom JSON metadata that can be used to overrule
+contains *mod_auth_openidc* specific custom JSON metadata that can be used to overrule
 some of the settings defined in `auth_openidc.conf` on a per-client basis. The filename
 is the URL-encoded issuer name of the OP that this client is registered with.
 
@@ -217,7 +185,7 @@ Entries that can be included in the .conf file are:
     "auth_request_method"                overrides OIDCProviderAuthRequestMethod
     "registration_token"                 an access_token that will be used on client registration calls for the associated OP
 
-Sample client metadata for issuer `https://localhost:9031`, so the **mod_auth_openidc**
+Sample client metadata for issuer `https://localhost:9031`, so the *mod_auth_openidc*
 configuration filename is `localhost%3A9031.conf`:
 
     {
@@ -225,7 +193,7 @@ configuration filename is `localhost%3A9031.conf`:
         "scope" : "openid email profile"
     }
   
-And the related **mod_auth_openidc** Apache config section:
+And the related *mod_auth_openidc* Apache config section:
 
 ```apache
 OIDCMetadataDir <somewhere-writable-for-the-apache-process>/metadata
@@ -254,7 +222,7 @@ This is also the OpenID Connect specified way of triggering 3rd party initiated 
 to a specific provider when multiple OPs have been configured. In that case the callback
 may also contain a "login_hint" parameter with the login identifier the user might use to log in.
 
-An additional **mod_auth_openidc** specific parameter named `auth_request_params` may also be passed
+An additional *mod_auth_openidc* specific parameter named `auth_request_params` may also be passed
 in, see the [Wiki](https://github.com/pingidentity/mod_auth_openidc/wiki#13-how-can-i-add-custom-parameters-to-the-authorization-request)
 for its usage.
 
@@ -302,15 +270,15 @@ OIDCOAuthClientSecret 2Federate
 
 ###OAuth 2.0 Code Authorization Grant Flow
 
-Another example config for using a non-OpenID Connect server to perform
-authorization using the OAuth 2.0 Code Authorization Grant flow.  As no
-useful info is available for identifying the REMOTE_USER from plain OAuth 2.0,
-this relies on having a UserInfo endpoint to return at least a user id of
-some sort.  This need not be fully compliant with the OpenID spec for UserInfo
-endpoints, it just needs to return a JSON object.  The example server used here
-is a Phabricator server (https://phabricator.com/), which provides a simple
-OAuth 2.0 server implementation, and a user.whoami API method to obtain information
-about the logged in user (under a result object in the JSON response).
+> Another example config for using a non-OpenID Connect server to perform
+> authorization using the OAuth 2.0 Code Authorization Grant flow.  As no
+> useful info is available for identifying the REMOTE_USER from plain OAuth 2.0,
+> this relies on having a UserInfo endpoint to return at least a user id of
+> some sort.  This need not be fully compliant with the OpenID spec for UserInfo
+> endpoints, it just needs to return a JSON object.  The example server used here
+> is a Phabricator server (https://phabricator.com/), which provides a simple
+> OAuth 2.0 server implementation, and a user.whoami API method to obtain information
+> about the logged in user (under a result object in the JSON response).
 
 ```apache
 OIDCSSLValidateServer Off
