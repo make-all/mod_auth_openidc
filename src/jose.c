@@ -142,7 +142,7 @@ char *oidc_jwt_serialize(apr_pool_t *pool, oidc_jwt_t *jwt,
 		if (cjose_base64url_encode((const uint8_t *) s_payload,
 				strlen(s_payload), &out, &out_len, &cjose_err) == FALSE)
 			return FALSE;
-		cser = apr_pstrndup(pool, out, out_len);
+		cser = apr_pstrmemdup(pool, out, out_len);
 		cjose_get_dealloc()(out);
 
 		free(s_payload);
@@ -188,7 +188,7 @@ int oidc_jwt_alg2kty(oidc_jwt_t *jwt) {
 /*
  * return the key size for an algorithm
  */
-int oidc_alg2keysize(const char *alg) {
+unsigned int oidc_alg2keysize(const char *alg) {
 
 	if (alg == NULL)
 		return 0;
@@ -385,7 +385,7 @@ static apr_byte_t oidc_jose_hash_and_base64url_encode(apr_pool_t *pool,
 	if (cjose_base64url_encode(hashed, hashed_len, &out, &out_len,
 			&cjose_err) == FALSE)
 		return FALSE;
-	*output = apr_pstrndup(pool, out, out_len);
+	*output = apr_pstrmemdup(pool, out, out_len);
 	cjose_get_dealloc()(out);
 	return TRUE;
 }
@@ -738,6 +738,8 @@ apr_byte_t oidc_jwt_parse(apr_pool_t *pool, const char *input_json,
 		return FALSE;
 
 	*j_jwt = oidc_jwt_new(pool, FALSE, FALSE);
+	if (*j_jwt == NULL)
+		return FALSE;
 	oidc_jwt_t *jwt = *j_jwt;
 
 	jwt->cjose_jws = cjose_jws_import(s_json, strlen(s_json), &cjose_err);
@@ -1240,7 +1242,7 @@ static apr_byte_t oidc_jwk_parse_rsa_x5c(apr_pool_t *pool, json_t *json,
 	int i = 0;
 	char *s = apr_psprintf(pool, "%s\n", OIDC_JOSE_CERT_BEGIN);
 	while (i < strlen(s_x5c)) {
-		s = apr_psprintf(pool, "%s%s\n", s, apr_pstrndup(pool, s_x5c + i, len));
+		s = apr_psprintf(pool, "%s%s\n", s, apr_pstrmemdup(pool, s_x5c + i, len));
 		i += len;
 	}
 	s = apr_psprintf(pool, "%s%s\n", s, OIDC_JOSE_CERT_END);

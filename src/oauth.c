@@ -63,8 +63,11 @@
  */
 static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
 		const char *token, char **response) {
+	
+	oidc_debug(r, "enter");
 
 	char *basic_auth = NULL;
+	char *bearer_auth = NULL;
 
 	/* assemble parameters to call the token endpoint for validation */
 	apr_table_t *params = apr_table_make(r->pool, 4);
@@ -80,24 +83,24 @@ static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
 	if (oidc_proto_token_endpoint_auth(r, c,
 			c->oauth.introspection_endpoint_auth, c->oauth.client_id,
 			c->oauth.client_secret, c->oauth.introspection_endpoint_url, params,
-			&basic_auth) == FALSE)
+			&basic_auth, &bearer_auth) == FALSE)
 		return FALSE;
 
 	/* call the endpoint with the constructed parameter set and return the resulting response */
 	return apr_strnatcmp(c->oauth.introspection_endpoint_method,
 			OIDC_INTROSPECTION_METHOD_GET) == 0 ?
 					oidc_util_http_get(r, c->oauth.introspection_endpoint_url, params,
-							basic_auth, NULL, c->oauth.ssl_validate_server, response,
+							basic_auth, bearer_auth, c->oauth.ssl_validate_server, response,
 							c->http_timeout_long, c->outgoing_proxy,
 							oidc_dir_cfg_pass_cookies(r),
-							c->oauth.introspection_endpoint_tls_client_cert,
-							c->oauth.introspection_endpoint_tls_client_key) :
+							oidc_util_get_full_path(r->pool, c->oauth.introspection_endpoint_tls_client_cert),
+							oidc_util_get_full_path(r->pool, c->oauth.introspection_endpoint_tls_client_key)) :
 							oidc_util_http_post_form(r, c->oauth.introspection_endpoint_url,
-									params, basic_auth, NULL, c->oauth.ssl_validate_server,
+									params, basic_auth, bearer_auth, c->oauth.ssl_validate_server,
 									response, c->http_timeout_long, c->outgoing_proxy,
 									oidc_dir_cfg_pass_cookies(r),
-									c->oauth.introspection_endpoint_tls_client_cert,
-									c->oauth.introspection_endpoint_tls_client_key);
+									oidc_util_get_full_path(r->pool, c->oauth.introspection_endpoint_tls_client_cert),
+									oidc_util_get_full_path(r->pool, c->oauth.introspection_endpoint_tls_client_key));
 }
 
 /*
@@ -107,7 +110,7 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 		const char **access_token) {
 
 	/* get the directory specific setting on how the token can be passed in */
-	int accept_token_in = oidc_cfg_dir_accept_token_in(r);
+	apr_byte_t accept_token_in = oidc_cfg_dir_accept_token_in(r);
 	const char *cookie_name = oidc_cfg_dir_accept_token_in_option(r,
 			OIDC_OAUTH_ACCEPT_TOKEN_IN_OPTION_COOKIE_NAME);
 
@@ -465,7 +468,6 @@ static apr_byte_t oidc_oauth_resolve_access_token(request_rec *r, oidc_cfg *c,
  * TODO: document that we're reusing the following settings from the OIDC config section:
  *       - JWKs URI refresh interval
  *       - encryption key material (OIDCPrivateKeyFiles)
- *       - iat slack (OIDCIDTokenIatSlack)
  *
  * OIDCOAuthRemoteUserClaim client_id
  * # 32x 61 hex
@@ -496,9 +498,11 @@ static apr_byte_t oidc_oauth_validate_jwt_access_token(request_rec *r,
 	oidc_debug(r, "successfully parsed JWT with header: %s",
 			jwt->header.value.str);
 
-	/* validate the access token JWT, validating optional exp + iat */
-	if (oidc_proto_validate_jwt(r, jwt, NULL, FALSE, FALSE,
-			c->provider.idtoken_iat_slack) == FALSE) {
+	/*
+	 * validate the access token JWT by validating the (optional) exp claim
+	 * don't enforce anything around iat since it doesn't make much sense for access tokens
+	 */
+	if (oidc_proto_validate_jwt(r, jwt, NULL, FALSE, FALSE, -1) == FALSE) {
 		oidc_jwt_destroy(jwt);
 		return FALSE;
 	}
@@ -558,7 +562,7 @@ static apr_byte_t oidc_oauth_set_request_user(request_rec *r, oidc_cfg *c,
 	char *remote_user = NULL;
 
 	if (oidc_get_remote_user(r, c->oauth.remote_user_claim.claim_name,
-			c->oauth.remote_user_claim.reg_exp, token, &remote_user) == FALSE) {
+			c->oauth.remote_user_claim.reg_exp, c->oauth.remote_user_claim.replace, token, &remote_user) == FALSE) {
 		oidc_error(r,
 				"" OIDCOAuthRemoteUserClaim " is set to \"%s\", but could not set the remote user based the available claims for the user",
 				c->oauth.remote_user_claim.claim_name);
@@ -566,14 +570,12 @@ static apr_byte_t oidc_oauth_set_request_user(request_rec *r, oidc_cfg *c,
 	}
 
 	r->user = remote_user;
-
-	oidc_debug(r, "set user to \"%s\" based on claim: \"%s\"%s", r->user,
-			c->oauth.remote_user_claim.claim_name,
-			c->oauth.remote_user_claim.reg_exp ?
-					apr_psprintf(r->pool, " and expression: \"%s\"",
-							c->oauth.remote_user_claim.reg_exp) :
-							"");
-
+    oidc_debug(r, "set user to \"%s\" based on claim: \"%s\"%s", r->user,
+               c->oauth.remote_user_claim.claim_name,
+               c->oauth.remote_user_claim.reg_exp ?
+               apr_psprintf(r->pool, " and expression: \"%s\" and replace string: \"%s\"",
+                            c->oauth.remote_user_claim.reg_exp, c->oauth.remote_user_claim.replace) :
+               "");
 	return TRUE;
 }
 
@@ -677,8 +679,8 @@ int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c) {
 
 	/* set the user authentication HTTP header if set and required */
 	char *authn_header = oidc_cfg_dir_authn_header(r);
-	int pass_headers = oidc_cfg_dir_pass_info_in_headers(r);
-	int pass_envvars = oidc_cfg_dir_pass_info_in_envvars(r);
+	apr_byte_t pass_headers = oidc_cfg_dir_pass_info_in_headers(r);
+	apr_byte_t pass_envvars = oidc_cfg_dir_pass_info_in_envvars(r);
 
 	if ((r->user != NULL) && (authn_header != NULL))
 		oidc_util_hdr_in_set(r, authn_header, r->user);

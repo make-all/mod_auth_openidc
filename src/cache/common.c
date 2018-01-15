@@ -79,7 +79,19 @@ oidc_cache_mutex_t *oidc_cache_mutex_create(apr_pool_t *pool) {
 	oidc_cache_mutex_t *ctx = apr_pcalloc(pool, sizeof(oidc_cache_mutex_t));
 	ctx->mutex = NULL;
 	ctx->mutex_filename = NULL;
+	ctx->shm = NULL;
+	ctx->sema = NULL;
 	return ctx;
+}
+
+#define OIDC_CACHE_ERROR_STR_MAX 255
+
+/*
+ * convert a apr status code to a string
+ */
+char *oidc_cache_status2str(apr_status_t statcode) {
+	char buf[OIDC_CACHE_ERROR_STR_MAX];
+	return apr_strerror(statcode, buf, OIDC_CACHE_ERROR_STR_MAX);
 }
 
 apr_byte_t oidc_cache_mutex_post_config(server_rec *s, oidc_cache_mutex_t *m,
@@ -99,8 +111,8 @@ apr_byte_t oidc_cache_mutex_post_config(server_rec *s, oidc_cache_mutex_t *m,
 			APR_LOCK_DEFAULT, s->process->pool);
 	if (rv != APR_SUCCESS) {
 		oidc_serror(s,
-				"apr_global_mutex_create failed to create mutex on file %s",
-				m->mutex_filename);
+				"apr_global_mutex_create failed to create mutex on file %s: %s (%d)",
+				m->mutex_filename, oidc_cache_status2str(rv), rv);
 		return FALSE;
 	}
 
@@ -113,10 +125,20 @@ apr_byte_t oidc_cache_mutex_post_config(server_rec *s, oidc_cache_mutex_t *m,
 #endif
 	if (rv != APR_SUCCESS) {
 		oidc_serror(s,
-				"unixd_set_global_mutex_perms failed; could not set permissions ");
+				"unixd_set_global_mutex_perms failed; could not set permissions: %s (%d)",
+				oidc_cache_status2str(rv), rv);
 		return FALSE;
 	}
 #endif
+
+	rv = apr_shm_create(&m->shm, sizeof(int), NULL, s->process->pool);
+	if (rv != APR_SUCCESS) {
+		oidc_serror(s, "apr_shm_create failed to create shared memory segment");
+		return FALSE;
+	}
+
+	m->sema = apr_shm_baseaddr_get(m->shm);
+	*m->sema = 1;
 
 	return TRUE;
 }
@@ -133,9 +155,16 @@ apr_status_t oidc_cache_mutex_child_init(apr_pool_t *p, server_rec *s,
 
 	if (rv != APR_SUCCESS) {
 		oidc_serror(s,
-				"apr_global_mutex_child_init failed to reopen mutex on file %s",
-				m->mutex_filename);
+				"apr_global_mutex_child_init failed to reopen mutex on file %s: %s (%d)",
+				m->mutex_filename, oidc_cache_status2str(rv), rv);
+	} else {
+		apr_global_mutex_lock(m->mutex);
+		m->sema = apr_shm_baseaddr_get(m->shm);
+		(*m->sema)++;
+		apr_global_mutex_unlock(m->mutex);
 	}
+
+	//oidc_sdebug(s, "semaphore: %d (m=%pp,s=%pp)", *m->sema, m, s);
 
 	return rv;
 }
@@ -147,10 +176,9 @@ apr_byte_t oidc_cache_mutex_lock(request_rec *r, oidc_cache_mutex_t *m) {
 
 	apr_status_t rv = apr_global_mutex_lock(m->mutex);
 
-	if (rv != APR_SUCCESS) {
-		oidc_error(r, "apr_global_mutex_lock() failed [%d]", rv);
-		return FALSE;
-	}
+	if (rv != APR_SUCCESS)
+		oidc_error(r, "apr_global_mutex_lock() failed: %s (%d)",
+				oidc_cache_status2str(rv), rv);
 
 	return TRUE;
 }
@@ -162,10 +190,9 @@ apr_byte_t oidc_cache_mutex_unlock(request_rec *r, oidc_cache_mutex_t *m) {
 
 	apr_status_t rv = apr_global_mutex_unlock(m->mutex);
 
-	if (rv != APR_SUCCESS) {
-		oidc_error(r, "apr_global_mutex_unlock() failed [%d]", rv);
-		return FALSE;
-	}
+	if (rv != APR_SUCCESS)
+		oidc_error(r, "apr_global_mutex_unlock() failed: %s (%d)",
+				oidc_cache_status2str(rv), rv);
 
 	return TRUE;
 }
@@ -178,11 +205,24 @@ apr_byte_t oidc_cache_mutex_destroy(server_rec *s, oidc_cache_mutex_t *m) {
 	apr_status_t rv = APR_SUCCESS;
 
 	if (m->mutex != NULL) {
-		rv = apr_global_mutex_destroy(m->mutex);
-		if (rv != APR_SUCCESS) {
-			oidc_swarn(s, "apr_global_mutex_destroy failed: [%d]", rv);
+
+		apr_global_mutex_lock(m->mutex);
+		(*m->sema)--;
+		//oidc_sdebug(s, "semaphore: %d (m=%pp,s=%pp)", *m->sema, m->mutex, s);
+		apr_global_mutex_unlock(m->mutex);
+
+		if ((m->shm != NULL) && (*m->sema == 0)) {
+
+			rv = apr_global_mutex_destroy(m->mutex);
+			oidc_sdebug(s, "apr_global_mutex_destroy returned :%d", rv);
+			m->mutex = NULL;
+
+			rv = apr_shm_destroy(m->shm);
+			oidc_sdebug(s, "apr_shm_destroy for semaphore returned: %d", rv);
+			m->shm = NULL;
+
+			rv = APR_SUCCESS;
 		}
-		m->mutex = NULL;
 	}
 
 	return rv;
@@ -429,9 +469,15 @@ static int oidc_cache_crypto_decrypt(request_rec *r, const char *cache_value,
 
 	/* grab the base64url-encoded tag after the "." */
 	char *encoded_tag = strstr(cache_value, ".");
-	if (encoded_tag == NULL)
+	if (encoded_tag == NULL) {
+		oidc_error(r,
+				"corrupted cache value: no tag separator found in encrypted value");
 		return FALSE;
-	*encoded_tag = '\0';
+	}
+
+	/* make sure we don't modify the original string since it may be just a pointer into the cache (shm) */
+	cache_value = apr_pstrmemdup(r->pool, cache_value,
+			strlen(cache_value) - strlen(encoded_tag));
 	encoded_tag++;
 
 	/* base64url decode the ciphertext */
@@ -496,8 +542,8 @@ static char *oidc_cache_get_hashed_key(request_rec *r, const char *passphrase,
 		const char *key) {
 	char *input = apr_psprintf(r->pool, "%s:%s", passphrase, key);
 	char *output = NULL;
-	if (oidc_util_hash_string_and_base64url_encode(r, OIDC_JOSE_ALG_SHA256, input,
-			&output) == FALSE) {
+	if (oidc_util_hash_string_and_base64url_encode(r, OIDC_JOSE_ALG_SHA256,
+			input, &output) == FALSE) {
 		oidc_error(r,
 				"oidc_util_hash_string_and_base64url_encode returned an error");
 		return NULL;

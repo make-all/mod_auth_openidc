@@ -123,6 +123,7 @@ extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 #define OIDC_METADATA_USERINFO_TOKEN_METHOD                 "userinfo_token_method"
 #define OIDC_METADATA_TOKEN_BINDING_POLICY                  "token_binding_policy"
 #define OIDC_METADATA_AUTH_REQUEST_METHOD                   "auth_request_method"
+#define OIDC_METADATA_ISSUER_SPECIFIC_REDIRECT_URI          "issuer_specific_redirect_uri"
 
 /*
  * get the metadata filename for a specified issuer (cq. urlencode it)
@@ -487,7 +488,7 @@ static apr_byte_t oidc_metadata_client_register(request_rec *r, oidc_cfg *cfg,
 	json_object_set_new(data, OIDC_METADATA_CLIENT_NAME,
 			json_string(provider->client_name));
 	json_object_set_new(data, OIDC_METADATA_REDIRECT_URIS,
-			json_pack("[s]", oidc_get_redirect_uri(r, cfg)));
+			json_pack("[s]", oidc_get_redirect_uri_iss(r, cfg, provider)));
 
 	json_t *response_types = json_array();
 	apr_array_header_t *flows = oidc_proto_supported_flows(r->pool);
@@ -907,16 +908,20 @@ static void oidc_metadata_parse_boolean(request_rec *r, json_t *json,
 		const char *key, int *value, int default_value) {
 	int int_value = 0;
 	char *s_value = NULL;
-	oidc_json_object_get_string(r->pool, json, key, &s_value,
-			NULL);
-	if (s_value != NULL) {
-		const char *rv = oidc_parse_boolean(r->pool, s_value, &int_value);
-		if (rv != NULL) {
-			oidc_warn(r, "%s: %s", key, rv);
-			int_value = default_value;
+	if (oidc_json_object_get_bool(r->pool, json, key, &int_value,
+			default_value) == FALSE) {
+		oidc_json_object_get_string(r->pool, json, key, &s_value,
+				NULL);
+		if (s_value != NULL) {
+			const char *rv = oidc_parse_boolean(r->pool, s_value, &int_value);
+			if (rv != NULL) {
+				oidc_warn(r, "%s: %s", key, rv);
+				int_value = default_value;
+			}
+		} else {
+			oidc_json_object_get_int(r->pool, json, key, &int_value,
+					default_value);
 		}
-	} else {
-		oidc_json_object_get_int(r->pool, json, key, &int_value, default_value);
 	}
 	*value = (int_value != 0) ? TRUE : FALSE;
 }
@@ -1234,6 +1239,12 @@ apr_byte_t oidc_metadata_conf_parse(request_rec *r, oidc_cfg *cfg,
 	else
 		provider->auth_request_method = cfg->provider.auth_request_method;
 
+	/* get the issuer specific redirect URI option */
+	oidc_metadata_parse_boolean(r, j_conf,
+			OIDC_METADATA_ISSUER_SPECIFIC_REDIRECT_URI,
+			&provider->issuer_specific_redirect_uri,
+			cfg->provider.issuer_specific_redirect_uri);
+
 	return TRUE;
 }
 
@@ -1261,11 +1272,11 @@ apr_byte_t oidc_metadata_client_parse(request_rec *r, oidc_cfg *cfg,
 		if ((apr_strnatcmp(token_endpoint_auth, OIDC_PROTO_CLIENT_SECRET_POST)
 				== 0)
 				|| (apr_strnatcmp(token_endpoint_auth,
-						OIDC_PROTO_CLIENT_SECRET_BASIC) == 0)
-						|| (apr_strnatcmp(token_endpoint_auth,
-								OIDC_PROTO_CLIENT_SECRET_JWT) == 0)
+								OIDC_PROTO_CLIENT_SECRET_BASIC) == 0)
 								|| (apr_strnatcmp(token_endpoint_auth,
-										OIDC_PROTO_PRIVATE_KEY_JWT) == 0)) {
+												OIDC_PROTO_CLIENT_SECRET_JWT) == 0)
+												|| (apr_strnatcmp(token_endpoint_auth,
+																OIDC_PROTO_PRIVATE_KEY_JWT) == 0)) {
 			provider->token_endpoint_auth = apr_pstrdup(r->pool,
 					token_endpoint_auth);
 		} else {
