@@ -144,6 +144,8 @@ APLOG_USE_MODULE(auth_openidc);
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_QUERY   4
 /* accept bearer token as a cookie parameter (PingAccess) */
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE  8
+/* accept bearer token as basic auth password (non-oauth clients) */
+#define OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC   16
 
 /* the hash key of the cookie name value in the list of options */
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_OPTION_COOKIE_NAME "cookie-name"
@@ -491,9 +493,11 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token
 #define OIDC_PROTO_CLIENT_SECRET_POST  "client_secret_post"
 #define OIDC_PROTO_CLIENT_SECRET_JWT   "client_secret_jwt"
 #define OIDC_PROTO_PRIVATE_KEY_JWT     "private_key_jwt"
+#define OIDC_PROTO_BEARER_ACCESS_TOKEN "bearer_access_token"
 #define OIDC_PROTO_ENDPOINT_AUTH_NONE  "none"
 
 #define OIDC_PROTO_BEARER  "Bearer"
+#define OIDC_PROTO_BASIC   "Basic"
 
 #define OIDC_CLAIM_ISS             "iss"
 #define OIDC_CLAIM_AUD             "aud"
@@ -592,7 +596,7 @@ void oidc_proto_state_set_prompt(oidc_proto_state_t *proto_state, const char *pr
 void oidc_proto_state_set_pkce_state(oidc_proto_state_t *proto_state, const char *pkce_state);
 void oidc_proto_state_set_timestamp_now(oidc_proto_state_t *proto_state);
 
-apr_byte_t oidc_proto_token_endpoint_auth(request_rec *r, oidc_cfg *cfg, const char *token_endpoint_auth, const char *client_id, const char *client_secret, const char *audience, apr_table_t *params, char **basic_auth_str, char **bearer_auth_str);
+apr_byte_t oidc_proto_token_endpoint_auth(request_rec *r, oidc_cfg *cfg, const char *token_endpoint_auth, const char *client_id, const char *client_secret, const char *audience, apr_table_t *params, const char *bearer_access_token, char **basic_auth_str, char **bearer_auth_str);
 
 char *oidc_proto_peek_jwt_header(request_rec *r, const char *jwt, char **alg);
 int oidc_proto_authorization_request(request_rec *r, struct oidc_provider_t *provider, const char *login_hint, const char *redirect_uri, const char *state, oidc_proto_state_t *proto_state, const char *id_token_hint, const char *code_challenge, const char *auth_request_params, const char *path_scope);
@@ -841,5 +845,7 @@ void oidc_session_set_check_session_iframe(request_rec *r, oidc_session_t *z, co
 const char * oidc_session_get_check_session_iframe(request_rec *r, oidc_session_t *z);
 void oidc_session_set_logout_endpoint(request_rec *r, oidc_session_t *z, const char *logout_endpoint);
 const char * oidc_session_get_logout_endpoint(request_rec *r, oidc_session_t *z);
+
+char *oidc_parse_base64(apr_pool_t *pool, const char *input, char **output, int *output_len);
 
 #endif /* MOD_AUTH_OPENIDC_H_ */

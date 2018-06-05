@@ -2619,12 +2619,14 @@ static int oidc_handle_logout(request_rec *r, oidc_cfg *c,
 
 		}
 
-		if ((strstr(r->hostname, uri.hostname) == NULL)
-				|| (strstr(uri.hostname, r->hostname) == NULL)) {
+		const char *c_host = oidc_get_current_url_host(r);
+		if ((uri.hostname != NULL)
+				&& ((strstr(c_host, uri.hostname) == NULL)
+						|| (strstr(uri.hostname, c_host) == NULL))) {
 			error_description =
 					apr_psprintf(r->pool,
 							"logout value \"%s\" does not match the hostname of the current request \"%s\"",
-							apr_uri_unparse(r->pool, &uri, 0), r->hostname);
+							apr_uri_unparse(r->pool, &uri, 0), c_host);
 			oidc_error(r, "%s", error_description);
 			return oidc_util_html_send_error(r, c->error_template,
 					"Invalid Request", error_description,
@@ -2653,8 +2655,7 @@ static int oidc_handle_logout(request_rec *r, oidc_cfg *c,
 		char *logout_request = apr_pstrdup(r->pool, end_session_endpoint);
 		if (id_token_hint != NULL) {
 			logout_request = apr_psprintf(r->pool, "%s%sid_token_hint=%s",
-					logout_request,
-					strchr(logout_request ? logout_request : "",
+					logout_request, strchr(logout_request ? logout_request : "",
 							OIDC_CHAR_QUERY) != NULL ?
 									OIDC_STR_AMP :
 									OIDC_STR_QUERY,
@@ -2740,7 +2741,7 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 			"	   var timerID;\n"
 			"\n"
 			"      function checkSession() {\n"
-			"        console.log('checkSession: posting ' + message + ' to ' + targetOrigin);\n"
+			"        console.debug('checkSession: posting ' + message + ' to ' + targetOrigin);\n"
 			"        var win = window.parent.document.getElementById('%s').contentWindow;\n"
 			"        win.postMessage( message, targetOrigin);\n"
 			"      }\n"
@@ -2751,9 +2752,9 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 			"      }\n"
 			"\n"
 			"      function receiveMessage(e) {\n"
-			"        console.log('receiveMessage: ' + e.data + ' from ' + e.origin);\n"
+			"        console.debug('receiveMessage: ' + e.data + ' from ' + e.origin);\n"
 			"        if (e.origin !== targetOrigin ) {\n"
-			"          console.log('receiveMessage: cross-site scripting attack?');\n"
+			"          console.debug('receiveMessage: cross-site scripting attack?');\n"
 			"          return;\n"
 			"        }\n"
 			"        if (e.data != 'unchanged') {\n"

@@ -79,11 +79,18 @@ static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
 	/* add the access_token itself */
 	apr_table_addn(params, c->oauth.introspection_token_param_name, token);
 
+	const char *bearer_access_token_auth =
+			((c->oauth.introspection_client_auth_bearer_token != NULL)
+					&& strcmp(c->oauth.introspection_client_auth_bearer_token,
+							"") == 0) ?
+									apr_table_get(params, token) :
+									c->oauth.introspection_client_auth_bearer_token;
+
 	/* add the token endpoint authentication credentials */
 	if (oidc_proto_token_endpoint_auth(r, c,
 			c->oauth.introspection_endpoint_auth, c->oauth.client_id,
 			c->oauth.client_secret, c->oauth.introspection_endpoint_url, params,
-			&basic_auth, &bearer_auth) == FALSE)
+			bearer_access_token_auth, &basic_auth, &bearer_auth) == FALSE)
 		return FALSE;
 
 	/* call the endpoint with the constructed parameter set and return the resulting response */
@@ -118,18 +125,23 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 
 	*access_token = NULL;
 
-	if ((accept_token_in & OIDC_OAUTH_ACCEPT_TOKEN_IN_HEADER)
-			|| (accept_token_in == OIDC_OAUTH_ACCEPT_TOKEN_IN_DEFAULT)) {
+	const bool accept_header = (accept_token_in & OIDC_OAUTH_ACCEPT_TOKEN_IN_HEADER) || (accept_token_in == OIDC_OAUTH_ACCEPT_TOKEN_IN_DEFAULT);
+
+	if ((accept_header)
+			|| (accept_token_in & OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC)) {
 
 		/* get the authorization header */
 		const char *auth_line = oidc_util_hdr_in_authorization_get(r);
 		if (auth_line) {
 			oidc_debug(r, "authorization header found");
 
+			bool known_scheme = false;
+
 			/* look for the Bearer keyword */
-			if (apr_strnatcasecmp(
+			if ((apr_strnatcasecmp(
 					ap_getword(r->pool, &auth_line, OIDC_CHAR_SPACE),
-					OIDC_PROTO_BEARER) == 0) {
+					OIDC_PROTO_BEARER) == 0) &&
+					accept_header) {
 
 				/* skip any spaces after the Bearer keyword */
 				while (apr_isspace(*auth_line)) {
@@ -139,7 +151,26 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 				/* copy the result in to the access_token */
 				*access_token = apr_pstrdup(r->pool, auth_line);
 
-			} else {
+				known_scheme = true;
+
+			} else if (accept_token_in & OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC) {
+
+				char *decoded_line;
+				int decoded_len;
+				if (oidc_parse_base64(r->pool, auth_line, &decoded_line, &decoded_len) == NULL) {
+					decoded_line[decoded_len] = '\0';
+
+					if (strchr(decoded_line, ':') != NULL) {
+						/* Strip the username and colon and take just the password */
+						ap_getword_nulls(r->pool, (const char**)&decoded_line, ':');
+						*access_token = decoded_line;
+
+						known_scheme = true;
+					}
+				}
+			}
+
+			if (!known_scheme) {
 				oidc_warn(r,
 						"client used unsupported authentication scheme: %s",
 						r->uri);

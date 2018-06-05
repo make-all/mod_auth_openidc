@@ -378,6 +378,7 @@ const char *oidc_parse_boolean(apr_pool_t *pool, const char *arg,
 #define OIDC_ENDPOINT_AUTH_CLIENT_SECRET_BASIC "client_secret_basic"
 #define OIDC_ENDPOINT_AUTH_CLIENT_SECRET_JWT   "client_secret_jwt"
 #define OIDC_ENDPOINT_AUTH_PRIVATE_KEY_JWT     "private_key_jwt"
+#define OIDC_ENDPOINT_AUTH_BEARER_ACCESS_TOKEN "bearer_access_token"
 #define OIDC_ENDPOINT_AUTH_NONE                "none"
 
 /*
@@ -390,10 +391,11 @@ static const char *oidc_valid_endpoint_auth_method_impl(apr_pool_t *pool,
 			OIDC_ENDPOINT_AUTH_CLIENT_SECRET_BASIC,
 			OIDC_ENDPOINT_AUTH_CLIENT_SECRET_JWT,
 			OIDC_ENDPOINT_AUTH_NONE,
+			OIDC_ENDPOINT_AUTH_BEARER_ACCESS_TOKEN,
 			NULL,
 			NULL };
 	if (has_private_key)
-		options[3] = OIDC_ENDPOINT_AUTH_PRIVATE_KEY_JWT;
+		options[5] = OIDC_ENDPOINT_AUTH_PRIVATE_KEY_JWT;
 
 	return oidc_valid_string_option(pool, arg, options);
 }
@@ -539,7 +541,7 @@ const char *oidc_parse_session_max_duration(apr_pool_t *pool, const char *arg,
 /*
  * parse a base64 encoded binary value from the provided string
  */
-static char *oidc_parse_base64(apr_pool_t *pool, const char *input,
+char *oidc_parse_base64(apr_pool_t *pool, const char *input,
 		char **output, int *output_len) {
 	int len = apr_base64_decode_len(input);
 	*output = apr_palloc(pool, len);
@@ -759,6 +761,7 @@ const char *oidc_parse_pass_userinfo_as(apr_pool_t *pool, const char *v1,
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_POST_STR   "post"
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_QUERY_STR  "query"
 #define OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE_STR "cookie"
+#define OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC_STR  "basic"
 
 /*
  * convert an "accept OAuth 2.0 token in" byte value to a string representation
@@ -782,6 +785,10 @@ const char *oidc_accept_oauth_token_in2str(apr_pool_t *pool, apr_byte_t v) {
 		options[i] = OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE_STR;
 		i++;
 	}
+	if (v & OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC) {
+		options[i] = OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC_STR;
+		i++;
+	}
 	return oidc_flatten_list_options(pool, options);
 }
 
@@ -797,6 +804,8 @@ static apr_byte_t oidc_parse_oauth_accept_token_in_str2byte(const char *v) {
 		return OIDC_OAUTH_ACCEPT_TOKEN_IN_QUERY;
 	if (strstr(v, OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE_STR) == v)
 		return OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE;
+	if (strstr(v, OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC_STR) == v)
+		return OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC;
 	return OIDC_OAUTH_ACCEPT_TOKEN_IN_DEFAULT;
 }
 
@@ -813,6 +822,7 @@ const char *oidc_parse_accept_oauth_token_in(apr_pool_t *pool, const char *arg,
 			OIDC_OAUTH_ACCEPT_TOKEN_IN_POST_STR,
 			OIDC_OAUTH_ACCEPT_TOKEN_IN_QUERY_STR,
 			OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE_STR,
+			OIDC_OAUTH_ACCEPT_TOKEN_IN_BASIC_STR,
 			NULL };
 	const char *rv = NULL;
 

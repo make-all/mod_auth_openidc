@@ -1,3 +1,36 @@
+04/27/2018
+- avoid crash when a relative logout URL parameter is passed in; thanks Vivien Delenne 
+- release 2.3.4
+
+03/22/2018
+- interpret X-Forwarded-Host when doing XSRF protection on the after-logout URL; see #341; thanks @pepe79
+- bump to 2.3.4rc4
+
+02/06/2018
+- add support for passing an access token in a HTTP Basic authentication password; thanks @puiterwijk
+- bump to 2.3.4rc3
+
+01/26/2018
+- send session management Javascript logging to debug; thanks @kerrermanisNL
+
+01/25/2018
+- add Cache-Control no-cache header to authorization requests to avoid replays of state/nonce; see #321
+- bump to 2.3.4rc2
+
+01/23/2018
+- add explicit endpoint authentication method "bearer_access_token"
+
+12/29/2017
+- correct documentation on kid usage for OIDCOAuthVerifyCertFiles; closes #318
+
+12/21/2017
+- fix compiler warnings for OpenSSL 1.1.x
+- bump to 2.3.4rc1
+
+11/21/2017
+- fix bug where endpoint authentication method "private_key_jwt" would not co-exist with "none"
+- bump to 2.3.4rc0
+
 11/16/2017
 - add support for passing userinfo as a JSON object or JWT; see #311
 - release 2.3.3

@@ -1,4 +1,6 @@
-Upstream [![Build Status](https://travis-ci.org/zmartzone/mod_auth_openidc.svg?branch=master)](https://travis-ci.org/zmartzone/mod_auth_openidc)
+Upstream
+[![Build Status](https://travis-ci.org/zmartzone/mod_auth_openidc.svg?branch=master)](https://travis-ci.org/zmartzone/mod_auth_openidc)
+[<img width="184" height="96" align="right" src="http://openid.net/wordpress-content/uploads/2016/04/oid-l-certification-mark-l-rgb-150dpi-90mm@2x.png" alt="OpenID Certification">](https://openid.net/certification)
 
 mod_auth_openidc
 ================
@@ -118,6 +120,25 @@ Require claim hd:<your-domain>
 The above is an authorization example of an exact match of a provided claim against a string value.
 For more authorization options see the [Wiki page on Authorization](https://github.com/zmartzone/mod_auth_openidc/wiki/Authorization).
 
+### OpenID Connect SSO with Keycloak
+
+See also the [Wiki page on Keycloak](https://github.com/zmartzone/mod_auth_openidc/wiki/Keycloak)
+
+```apache
+OIDCProviderMetadataURL https://keycloak.example.net/auth/realms/master/.well-known/openid-configuration
+OIDCRedirectURI https://www.example.net/oauth2callback
+OIDCCryptoPassphrase random1234
+OIDCClientID <your-client-id-registered-in-keycloak>
+OIDCClientSecret <your-client-secret-registered-in-keycloak>
+OIDCRemoteUserClaim email
+OIDCScope "openid email"
+
+<Location /example/>
+   AuthType openid-connect
+   Require valid-user
+</Location>
+```
+
 ### Quickstart with a generic OpenID Connect Provider
 
 1. install and load `mod_auth_openidc.so` in your Apache server
@@ -144,30 +165,6 @@ OIDCCryptoPassphrase <password>
 </Location>
 ```
 For details on configuring multiple providers see the [Wiki](https://github.com/zmartzone/mod_auth_openidc/wiki/Multiple-Providers).
-
-### PingFederate OAuth 2.0 Resource Server
-
-Example config for using PingFederate as your OAuth 2.0 Authorization server,
-based on the OAuth 2.0 PlayGround configuration and doing claims-based authorization, using
-RFC 7662 compliant Token Introspection.
-
-```apache
-# remote validation
-OIDCOAuthIntrospectionEndpoint https://localhost:9031/as/introspect.oauth2
-OIDCOAuthIntrospectionEndpointAuth client_secret_basic
-OIDCOAuthRemoteUserClaim Username
-	
-OIDCOAuthSSLValidateServer Off
-OIDCOAuthClientID rs_client
-OIDCOAuthClientSecret 2Federate
-
-<Location /api>
-   AuthType oauth20
-   Require claim client_id:ro_client
-   #Require claim scope~\bprofile\b
-</Location>
-```
-For details and additional options on the OAuth 2.0 Resource Server setup see the [Wiki](https://github.com/zmartzone/mod_auth_openidc/wiki/OAuth-2.0-Resource-Server).
 
 ### Quickstart with a generic OAuth 2.0 Resource Server
 
