@@ -1,3 +1,32 @@
+06/15/2018
+- add check to detect session cache corruption for server-based caches and cached static metadata
+- release 2.3.6
+
+05/29/2018
+- avoid using pipelining for Redis
+- bump to 2.3.6rc4
+
+05/28/2018
+- send Basic header in OAuth www-authenticate response if that's the only accepted method; thanks @puiterwijk
+
+05/28/2018
+- refactor Redis cache backend to solve issues on AUTH errors: a) memory leak and b) redisGetReply lagging behind
+- adjust copyright year/org
+- bump to 2.3.6rc3
+
+05/23/2018
+- fix buffer overflow in shm cache key set strcpy; thanks @kyprizel
+- bump to 2.3.6rc2
+
+05/22/2018
+- turn missing session_state from warning into a debug statement
+- fix missing "return" on error return from the OP; see #345; thanks @gergan
+- bump to 2.3.6rc1
+
+05/19/2018
+- explicitly set encryption kid so we're compatible with cjose >= 0.6.0
+- bump to 2.3.6rc0
+
 05/18/2018
 - fix encoding of preserved POST data; see #338; thanks @timpuri
 - avoid buffer overflow in shm cache key construction; thanks @kyprizel

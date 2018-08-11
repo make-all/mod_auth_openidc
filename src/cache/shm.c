@@ -18,6 +18,7 @@
  */
 
 /***************************************************************************
+ * Copyright (C) 2017-2018 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -153,10 +154,10 @@ static char *oidc_cache_shm_get_key(request_rec *r, const char *section,
 	char *section_key = apr_psprintf(r->pool, "%s:%s", section, key);
 
 	/* check that the passed in key is valid */
-	if (strlen(section_key) > OIDC_CACHE_SHM_KEY_MAX) {
+	if (strlen(section_key) >= OIDC_CACHE_SHM_KEY_MAX) {
 		oidc_error(r,
-				"could not construct cache key since size is too large (%s)",
-				section_key);
+				"could not construct cache key since key size is too large (%d >= %d) (%s)",
+				(int )strlen(section_key), OIDC_CACHE_SHM_KEY_MAX, section_key);
 		return NULL;
 	}
 

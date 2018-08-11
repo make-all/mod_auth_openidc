@@ -18,6 +18,7 @@
  */
 
 /***************************************************************************
+ * Copyright (C) 2017-2018 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -375,6 +376,9 @@ char *oidc_proto_create_request_object(request_rec *r,
 
 		if (jwe->header.enc == NULL)
 			jwe->header.enc = apr_pstrdup(r->pool, CJOSE_HDR_ENC_A128CBC_HS256);
+
+		if (jwk->kid != NULL)
+			jwe->header.kid = jwk->kid;
 
 		if (oidc_jwt_encrypt(r->pool, jwe, jwk, cser,
 				&serialized_request_object, &err) == FALSE) {

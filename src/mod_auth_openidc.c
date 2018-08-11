@@ -18,6 +18,7 @@
  */
 
 /***************************************************************************
+ * Copyright (C) 2017-2018 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -316,8 +317,15 @@ static apr_byte_t oidc_provider_static_config(request_rec *r, oidc_cfg *c,
 
 	} else {
 
-		/* correct parsing and validation was already done when it was put in the cache */
 		oidc_util_decode_json_object(r, s_json, &j_provider);
+
+		/* check to see if it is valid metadata */
+		if (oidc_metadata_provider_is_valid(r, c, j_provider, NULL) == FALSE) {
+			oidc_error(r,
+					"cache corruption detected: invalid metadata from url: %s",
+					c->provider.metadata_url);
+			return FALSE;
+		}
 	}
 
 	*provider = apr_pcalloc(r->pool, sizeof(oidc_provider_t));
@@ -1685,7 +1693,7 @@ static apr_byte_t oidc_save_in_session(request_rec *r, oidc_cfg *c,
 		oidc_debug(r,
 				"session management disabled: \"check_session_iframe\" is not set in provider configuration");
 	} else {
-		oidc_warn(r,
+		oidc_debug(r,
 				"session management disabled: no \"session_state\" value is provided in the authentication response even though \"check_session_iframe\" (%s) is set in the provider configuration",
 				provider->check_session_iframe);
 	}
@@ -3262,7 +3270,7 @@ int oidc_handle_redirect_uri_request(request_rec *r, oidc_cfg *c,
 		//
 		//		/* send user facing error to browser */
 		//		return oidc_util_html_send_error(r, error, descr, DONE);
-		oidc_handle_redirect_authorization_response(r, c, session);
+		return oidc_handle_redirect_authorization_response(r, c, session);
 	}
 
 	oidc_error(r,
