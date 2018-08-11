@@ -2076,36 +2076,49 @@ apr_hash_t * oidc_util_merge_key_sets(apr_pool_t *pool, apr_hash_t *k1,
  *     text_original: "match 292 numbers"
  *     text_replaced: "292"
  */
+apr_byte_t oidc_util_regexp_substitute(apr_pool_t *pool, const char *input,
+		const char *regexp, const char *replace, char **output,
+		char **error_str) {
 
-apr_byte_t oidc_util_regexp_substitute(
-        apr_pool_t *pool, const char *input,
-        const char *regexp, const char *replace, char **output, char **error_str) {
+	const char *errorptr = NULL;
+	int erroffset;
+	char *substituted = NULL;
+	apr_byte_t rc = FALSE;
 
-    const char *errorptr;
-    int erroffset;
-    pcre *preg;
-    char *substituted;
+	pcre *preg = pcre_compile(regexp, 0, &errorptr, &erroffset, NULL);
+	if (preg == NULL) {
+		*error_str = apr_psprintf(pool,
+				"pattern [%s] is not a valid regular expression", regexp);
+		goto out;
+	}
 
-    preg = pcre_compile(regexp, 0, &errorptr, &erroffset, NULL);
+	if (strlen(input) >= OIDC_PCRE_MAXCAPTURE - 1) {
+		*error_str =
+				apr_psprintf(pool,
+						"string length (%d) is larger than the maximum allowed for pcre_subst (%d)",
+						(int) strlen(input), OIDC_PCRE_MAXCAPTURE - 1);
+		goto out;
+	}
 
-    if (preg == NULL) {
-        *error_str = apr_psprintf(pool, "pattern [%s] is not a valid regular expression", regexp);
-        pcre_free(preg);
-        return FALSE;
-    }
+	substituted = pcre_subst(preg, NULL, input, (int) strlen(input), 0, 0,
+			replace);
+	if (substituted == NULL) {
+		*error_str =
+				apr_psprintf(pool,
+						"unknown error could not match string [%s] using pattern [%s] and replace matches in [%s]",
+						input, regexp, replace);
+		goto out;
+	}
 
-    substituted = pcre_subst(preg, NULL, input, (int) strlen(input), 0, 0, replace);
-    if (substituted) {
-        *output = apr_pstrdup(pool, substituted);
-        pcre_free(preg);
-        pcre_free(substituted);
-        return TRUE;
-    } else {
-        *error_str = apr_psprintf(pool,"unknown error could not match string [%s] using pattern [%s] and replace matches in [%s]",
-                                  input, regexp, replace);
-        pcre_free(preg);
-    }
-    return FALSE;
+	*output = apr_pstrdup(pool, substituted);
+	rc = TRUE;
+
+	out: if (substituted)
+		pcre_free(substituted);
+	if (preg)
+		pcre_free(preg);
+
+	return rc;
 }
 
 /*
@@ -2116,22 +2129,20 @@ apr_byte_t oidc_util_regexp_substitute(
 
 apr_byte_t oidc_util_regexp_first_match(apr_pool_t *pool, const char *input,
 		const char *regexp, char **output, char **error_str) {
-	const char *errorptr;
+	const char *errorptr = NULL;
 	int erroffset;
-	pcre *preg;
+	int rc = 0;
 	int subStr[OIDC_UTIL_REGEXP_MATCH_SIZE];
-	const char *psubStrMatchStr;
+	const char *psubStrMatchStr = NULL;
+	apr_byte_t rv = FALSE;
 
-	preg = pcre_compile(regexp, 0, &errorptr, &erroffset, NULL);
-
+	pcre *preg = pcre_compile(regexp, 0, &errorptr, &erroffset, NULL);
 	if (preg == NULL) {
 		*error_str = apr_psprintf(pool,
 				"pattern [%s] is not a valid regular expression", regexp);
-		pcre_free(preg);
-		return FALSE;
+		goto out;
 	}
 
-	int rc = 0;
 	if ((rc = pcre_exec(preg, NULL, input, (int) strlen(input), 0, 0, subStr,
 			OIDC_UTIL_REGEXP_MATCH_SIZE)) < 0) {
 		switch (rc) {
@@ -2159,24 +2170,27 @@ apr_byte_t oidc_util_regexp_first_match(apr_pool_t *pool, const char *input,
 			*error_str = apr_psprintf(pool, "unknown error: %d", rc);
 			break;
 		}
-		pcre_free(preg);
-		return FALSE;
+		goto out;
 	}
 
 	if (pcre_get_substring(input, subStr, rc, OIDC_UTIL_REGEXP_MATCH_NR,
 			&(psubStrMatchStr)) <= 0) {
 		*error_str = apr_psprintf(pool, "pcre_get_substring failed (rc=%d)",
 				rc);
-		pcre_free(preg);
-		return FALSE;
+		goto out;
 	}
 
 	*output = apr_pstrdup(pool, psubStrMatchStr);
+	rv = TRUE;
 
-	pcre_free_substring(psubStrMatchStr);
-	pcre_free(preg);
+out:
 
-	return TRUE;
+	if (psubStrMatchStr)
+		pcre_free_substring(psubStrMatchStr);
+	if (preg)
+		pcre_free(preg);
+
+	return rv;
 }
 
 int oidc_util_cookie_domain_valid(const char *hostname, char *cookie_domain) {

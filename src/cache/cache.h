@@ -89,8 +89,8 @@ apr_byte_t oidc_cache_mutex_post_config(server_rec *s, oidc_cache_mutex_t *m,
 		const char *type);
 apr_status_t oidc_cache_mutex_child_init(apr_pool_t *p, server_rec *s,
 		oidc_cache_mutex_t *m);
-apr_byte_t oidc_cache_mutex_lock(request_rec *r, oidc_cache_mutex_t *m);
-apr_byte_t oidc_cache_mutex_unlock(request_rec *r, oidc_cache_mutex_t *m);
+apr_byte_t oidc_cache_mutex_lock(server_rec *s, oidc_cache_mutex_t *m);
+apr_byte_t oidc_cache_mutex_unlock(server_rec *s, oidc_cache_mutex_t *m);
 apr_byte_t oidc_cache_mutex_destroy(server_rec *s, oidc_cache_mutex_t *m);
 
 apr_byte_t oidc_cache_get(request_rec *r, const char *section, const char *key,
@@ -98,19 +98,21 @@ apr_byte_t oidc_cache_get(request_rec *r, const char *section, const char *key,
 apr_byte_t oidc_cache_set(request_rec *r, const char *section, const char *key,
 		const char *value, apr_time_t expiry);
 
-#define OIDC_CACHE_SECTION_SESSION      "s"
-#define OIDC_CACHE_SECTION_NONCE        "n"
-#define OIDC_CACHE_SECTION_JWKS         "j"
-#define OIDC_CACHE_SECTION_ACCESS_TOKEN "a"
-#define OIDC_CACHE_SECTION_PROVIDER     "p"
-#define OIDC_CACHE_SECTION_JTI          "t"
-#define OIDC_CACHE_SECTION_REQUEST_URI  "r"
+#define OIDC_CACHE_SECTION_SESSION           "s"
+#define OIDC_CACHE_SECTION_NONCE             "n"
+#define OIDC_CACHE_SECTION_JWKS              "j"
+#define OIDC_CACHE_SECTION_ACCESS_TOKEN      "a"
+#define OIDC_CACHE_SECTION_PROVIDER          "p"
+#define OIDC_CACHE_SECTION_OAUTH_PROVIDER    "o"
+#define OIDC_CACHE_SECTION_JTI               "t"
+#define OIDC_CACHE_SECTION_REQUEST_URI       "r"
 
 #define oidc_cache_get_session(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_SESSION, key, value)
 #define oidc_cache_get_nonce(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_NONCE, key, value)
 #define oidc_cache_get_jwks(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_JWKS, key, value)
 #define oidc_cache_get_access_token(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, key, value)
 #define oidc_cache_get_provider(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_PROVIDER, key, value)
+#define oidc_cache_get_oauth_provider(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_OAUTH_PROVIDER, key, value)
 #define oidc_cache_get_jti(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_JTI, key, value)
 #define oidc_cache_get_request_uri(r, key, value) oidc_cache_get(r, OIDC_CACHE_SECTION_REQUEST_URI, key, value)
 
@@ -119,6 +121,7 @@ apr_byte_t oidc_cache_set(request_rec *r, const char *section, const char *key,
 #define oidc_cache_set_jwks(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_JWKS, key, value, expiry)
 #define oidc_cache_set_access_token(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_ACCESS_TOKEN, key, value, expiry)
 #define oidc_cache_set_provider(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_PROVIDER, key, value, expiry)
+#define oidc_cache_set_oauth_provider(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_OAUTH_PROVIDER, key, value, expiry)
 #define oidc_cache_set_jti(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_JTI, key, value, expiry)
 #define oidc_cache_set_request_uri(r, key, value, expiry) oidc_cache_set(r, OIDC_CACHE_SECTION_REQUEST_URI, key, value, expiry)
 
