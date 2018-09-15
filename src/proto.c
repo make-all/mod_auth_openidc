@@ -154,7 +154,7 @@ static int oidc_proto_delete_from_request(void* rec, const char* name,
 		const char* value) {
 	oidc_proto_copy_req_ctx_t *ctx = (oidc_proto_copy_req_ctx_t *) rec;
 
-	oidc_debug(ctx->r, "deleting from query paramters: name: %s, value: %s",
+	oidc_debug(ctx->r, "deleting from query parameters: name: %s, value: %s",
 			name, value);
 
 	if (oidc_proto_param_needs_action(ctx->request_object_config, name,
@@ -649,7 +649,7 @@ int oidc_proto_authorization_request(request_rec *r,
 		rv = oidc_proto_html_post(r, provider->authorization_endpoint_url,
 				params);
 
-	} else {
+	} else if (provider->auth_request_method == OIDC_AUTH_REQUEST_METHOD_GET) {
 
 		/* construct the full authorization request URL */
 		authorization_request = oidc_util_http_query_encoded_url(r,
@@ -666,6 +666,10 @@ int oidc_proto_authorization_request(request_rec *r,
 			/* and tell Apache to return an HTTP Redirect (302) message */
 			rv = HTTP_MOVED_TEMPORARILY;
 		}
+	} else {
+		oidc_error(r, "provider->auth_request_method set to wrong value: %d",
+				provider->auth_request_method);
+		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
 	/* add a referred token binding request for the provider if enabled */

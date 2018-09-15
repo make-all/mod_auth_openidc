@@ -142,7 +142,7 @@ char *oidc_jwt_serialize(apr_pool_t *pool, oidc_jwt_t *jwt,
 		size_t out_len;
 		if (cjose_base64url_encode((const uint8_t *) s_payload,
 				strlen(s_payload), &out, &out_len, &cjose_err) == FALSE)
-			return FALSE;
+			return NULL;
 		cser = apr_pstrmemdup(pool, out, out_len);
 		cjose_get_dealloc()(out);
 
@@ -435,14 +435,14 @@ oidc_jwk_t *oidc_jwk_create_symmetric_key(apr_pool_t *pool, const char *skid,
 	if (cjose_jwk == NULL) {
 		oidc_jose_error(err, "cjose_jwk_create_oct_spec failed: %s",
 				oidc_cjose_e2s(pool, cjose_err));
-		return FALSE;
+		return NULL;
 	}
 
 	if (set_kid == TRUE) {
 		if (oidc_jwk_set_or_generate_kid(pool, cjose_jwk, skid,
 				(const char *) key, key_len, err) == FALSE) {
 			cjose_jwk_release(cjose_jwk);
-			return FALSE;
+			return NULL;
 		}
 	}
 
@@ -779,6 +779,7 @@ apr_byte_t oidc_jwt_parse(apr_pool_t *pool, const char *input_json,
 			&jwt->payload, err) == FALSE) {
 		oidc_jwt_destroy(jwt);
 		*j_jwt = NULL;
+		return FALSE;
 	}
 
 	return TRUE;
@@ -839,7 +840,7 @@ apr_byte_t oidc_jwt_sign(apr_pool_t *pool, oidc_jwt_t *jwt, oidc_jwk_t *jwk,
 	return TRUE;
 }
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000)
+#if (OPENSSL_VERSION_NUMBER < 0x10100000) || defined(LIBRESSL_VERSION_NUMBER)
 EVP_MD_CTX * EVP_MD_CTX_new() {
 	return malloc(sizeof(EVP_MD_CTX));
 }

@@ -380,6 +380,7 @@ typedef struct oidc_cfg {
 	int http_timeout_long;
 	int http_timeout_short;
 	int state_timeout;
+	int max_number_of_state_cookies;
 	int session_inactivity_timeout;
 	int session_cache_fallback_to_cookie;
 
@@ -432,7 +433,7 @@ apr_byte_t oidc_get_remote_user(request_rec *r, const char *claim_name, const ch
 #define OIDC_REDIRECT_URI_REQUEST_REQUEST_URI      "request_uri"
 
 // oidc_oauth
-int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c);
+int oidc_oauth_check_userid(request_rec *r, oidc_cfg *c, const char *access_token);
 apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token);
 
 // oidc_proto.c
@@ -537,7 +538,9 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token
 #define OIDC_CONTENT_TYPE_JWT           "application/jwt"
 #define OIDC_CONTENT_TYPE_FORM_ENCODED  "application/x-www-form-urlencoded"
 #define OIDC_CONTENT_TYPE_IMAGE_PNG     "image/png"
-#define OIDC_CONTENT_TYPE_HTML          "text/html"
+#define OIDC_CONTENT_TYPE_TEXT_HTML     "text/html"
+#define OIDC_CONTENT_TYPE_APP_XHTML_XML "application/xhtml+xml"
+#define OIDC_CONTENT_TYPE_ANY           "*/*"
 
 #define OIDC_STR_SPACE         " "
 #define OIDC_STR_EQUAL         "="
@@ -560,6 +563,7 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token
 #define OIDC_CHAR_FORWARD_SLASH '/'
 #define OIDC_CHAR_PIPE          '|'
 #define OIDC_CHAR_AMP           '&'
+#define OIDC_CHAR_SEMI_COLON    ';'
 
 #define OIDC_APP_INFO_REFRESH_TOKEN     "refresh_token"
 #define OIDC_APP_INFO_ACCESS_TOKEN      "access_token"
@@ -687,6 +691,7 @@ int oidc_cfg_cache_encrypt(request_rec *r);
 int oidc_cfg_session_cache_fallback_to_cookie(request_rec *r);
 const char *oidc_parse_pkce_type(apr_pool_t *pool, const char *arg, oidc_proto_pkce_t **type);
 const char *oidc_cfg_claim_prefix(request_rec *r);
+int oidc_cfg_max_number_of_state_cookies(oidc_cfg *cfg);
 
 // oidc_util.c
 int oidc_strnenvcmp(const char *a, const char *b, int len);
@@ -786,6 +791,7 @@ const char *oidc_util_hdr_in_host_get(const request_rec *r);
 void oidc_util_hdr_out_location_set(const request_rec *r, const char *value);
 const char *oidc_util_hdr_out_location_get(const request_rec *r);
 void oidc_util_hdr_err_out_add(const request_rec *r, const char *name, const char *value);
+apr_byte_t oidc_util_hdr_in_accept_contains(const request_rec *r, const char *needle);
 
 // oidc_metadata.c
 apr_byte_t oidc_metadata_provider_retrieve(request_rec *r, oidc_cfg *cfg, const char *issuer, const char *url, json_t **j_metadata, char **response);

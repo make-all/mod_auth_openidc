@@ -686,8 +686,14 @@ static apr_byte_t oidc_unsolicited_proto_state(request_rec *r, oidc_cfg *c,
 	return TRUE;
 }
 
-static void oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c,
+/*
+ * clean state cookies that have expired i.e. for outstanding requests that will never return
+ * successfully and return the number of remaining valid cookies/outstanding-requests while
+ * doing so
+ */
+static int oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c,
 		const char *currentCookieName) {
+	int number_of_valid_state_cookies = 0;
 	char *cookie, *tokenizerCtx;
 	char *cookies = apr_pstrdup(r->pool, oidc_util_hdr_in_cookie_get(r));
 	if (cookies != NULL) {
@@ -715,6 +721,8 @@ static void oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c,
 										cookieName);
 								oidc_util_set_cookie(r, cookieName, "", 0,
 										NULL);
+							} else {
+								number_of_valid_state_cookies++;
 							}
 							oidc_proto_state_destroy(proto_state);
 						}
@@ -724,6 +732,7 @@ static void oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c,
 			cookie = apr_strtok(NULL, OIDC_STR_SEMI_COLON, &tokenizerCtx);
 		}
 	}
+	return number_of_valid_state_cookies;
 }
 
 /*
@@ -796,8 +805,8 @@ static apr_byte_t oidc_restore_proto_state(request_rec *r, oidc_cfg *c,
  * set the state that is maintained between an authorization request and an authorization response
  * in a cookie in the browser that is cryptographically bound to that state
  */
-static apr_byte_t oidc_authorization_request_set_cookie(request_rec *r,
-		oidc_cfg *c, const char *state, oidc_proto_state_t *proto_state) {
+static int oidc_authorization_request_set_cookie(request_rec *r, oidc_cfg *c,
+		const char *state, oidc_proto_state_t *proto_state) {
 	/*
 	 * create a cookie consisting of 8 elements:
 	 * random value, original URL, original method, issuer, response_type, response_mod, prompt and timestamp
@@ -805,10 +814,40 @@ static apr_byte_t oidc_authorization_request_set_cookie(request_rec *r,
 	 */
 	char *cookieValue = oidc_proto_state_to_cookie(r, c, proto_state);
 	if (cookieValue == NULL)
-		return FALSE;
+		return HTTP_INTERNAL_SERVER_ERROR;
 
-	/* clean expired state cookies to avoid pollution */
-	oidc_clean_expired_state_cookies(r, c, NULL);
+	/*
+	 * clean expired state cookies to avoid pollution and optionally
+	 * try to avoid the number of state cookies exceeding a max
+	 */
+	int number_of_cookies = oidc_clean_expired_state_cookies(r, c, NULL);
+	int max_number_of_cookies = oidc_cfg_max_number_of_state_cookies(c);
+	if ((max_number_of_cookies > 0)
+			&& (number_of_cookies >= max_number_of_cookies)) {
+		oidc_warn(r,
+				"the number of existing, valid state cookies (%d) has exceeded the limit (%d), no additional authorization request + state cookie can be generated, aborting the request",
+				number_of_cookies, max_number_of_cookies);
+		/*
+		 * TODO: the html_send code below caters for the case that there's a user behind a
+		 * browser generating this request, rather than a piece of XHR code; how would an
+		 * XHR client handle this?
+		 */
+
+		/*
+		 * it appears that sending content with a 503 turns the HTTP status code
+		 * into a 200 so we'll avoid that for now: the user will see Apache specific
+		 * readable text anyway
+		 *
+		return oidc_util_html_send_error(r, c->error_template,
+				"Too Many Outstanding Requests",
+				apr_psprintf(r->pool,
+						"No authentication request could be generated since there are too many outstanding authentication requests already; you may have to wait up to %d seconds to be able to create a new request",
+						c->state_timeout),
+						HTTP_SERVICE_UNAVAILABLE);
+		*/
+
+		return HTTP_SERVICE_UNAVAILABLE;
+	}
 
 	/* assemble the cookie name for the state cookie */
 	const char *cookieName = oidc_get_state_cookie_name(r, state);
@@ -817,9 +856,7 @@ static apr_byte_t oidc_authorization_request_set_cookie(request_rec *r,
 	oidc_util_set_cookie(r, cookieName, cookieValue, -1,
 			c->cookie_same_site ? OIDC_COOKIE_EXT_SAME_SITE_LAX : NULL);
 
-	//free(s_value);
-
-	return TRUE;
+	return HTTP_OK;
 }
 
 /*
@@ -917,6 +954,26 @@ static void oidc_log_session_expires(request_rec *r, const char *msg,
 }
 
 /*
+ * see if this is a non-browser request
+ */
+static apr_byte_t oidc_is_xml_http_request(request_rec *r) {
+
+	if ((oidc_util_hdr_in_x_requested_with_get(r) != NULL)
+			&& (apr_strnatcasecmp(oidc_util_hdr_in_x_requested_with_get(r),
+					OIDC_HTTP_HDR_VAL_XML_HTTP_REQUEST) == 0))
+		return TRUE;
+
+	if ((oidc_util_hdr_in_accept_contains(r, OIDC_CONTENT_TYPE_TEXT_HTML)
+			== FALSE) && (oidc_util_hdr_in_accept_contains(r,
+					OIDC_CONTENT_TYPE_APP_XHTML_XML) == FALSE)
+					&& (oidc_util_hdr_in_accept_contains(r,
+							OIDC_CONTENT_TYPE_ANY) == FALSE))
+		return TRUE;
+
+	return FALSE;
+}
+
+/*
  * find out which action we need to take when encountering an unauthenticated request
  */
 static int oidc_handle_unauthenticated_user(request_rec *r, oidc_cfg *c) {
@@ -945,9 +1002,7 @@ static int oidc_handle_unauthenticated_user(request_rec *r, oidc_cfg *c) {
 		 * won't redirect the user and thus avoid creating a state cookie
 		 * for a non-browser (= Javascript) call that will never return from the OP
 		 */
-		if ((oidc_util_hdr_in_x_requested_with_get(r) != NULL)
-				&& (apr_strnatcasecmp(oidc_util_hdr_in_x_requested_with_get(r),
-						OIDC_HTTP_HDR_VAL_XML_HTTP_REQUEST) == 0))
+		if (oidc_is_xml_http_request(r) == TRUE)
 			return HTTP_UNAUTHORIZED;
 	}
 
@@ -958,17 +1013,6 @@ static int oidc_handle_unauthenticated_user(request_rec *r, oidc_cfg *c) {
 	return oidc_authenticate_user(r, c, NULL, oidc_get_current_url(r), NULL,
 			NULL, NULL, oidc_dir_cfg_path_auth_request_params(r),
 			oidc_dir_cfg_path_scope(r));
-}
-
-/*
- * see if this is a non-browser request
- */
-static apr_byte_t oidc_is_xml_http_request(request_rec *r) {
-	if ((oidc_util_hdr_in_x_requested_with_get(r) != NULL)
-			&& (apr_strnatcasecmp(oidc_util_hdr_in_x_requested_with_get(r),
-					OIDC_HTTP_HDR_VAL_XML_HTTP_REQUEST) == 0))
-		return TRUE;
-	return FALSE;
 }
 
 /*
@@ -1144,6 +1188,9 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 
 	oidc_debug(r, "enter");
 
+	char *result = NULL;
+	char *refreshed_access_token = NULL;
+
 	/* see if a userinfo endpoint is set, otherwise there's nothing to do for us */
 	if (provider->userinfo_endpoint_url == NULL) {
 		oidc_debug(r,
@@ -1176,7 +1223,6 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 	// TODO: long-term: session storage should be JSON (with explicit types and less conversion, using standard routines)
 
 	/* try to get claims from the userinfo endpoint using the provided access token */
-	char *result = NULL;
 	if (oidc_proto_resolve_userinfo(r, c, provider, id_token_sub, access_token,
 			&result, userinfo_jwt) == FALSE) {
 
@@ -1184,13 +1230,12 @@ static const char *oidc_retrieve_claims_from_userinfo_endpoint(request_rec *r,
 		if (session != NULL) {
 
 			/* first call to user info endpoint failed, but the access token may have just expired, so refresh it */
-			char *access_token = NULL;
 			if (oidc_refresh_access_token(r, c, session, provider,
-					&access_token) == TRUE) {
+					&refreshed_access_token) == TRUE) {
 
 				/* try again with the new access token */
 				if (oidc_proto_resolve_userinfo(r, c, provider, id_token_sub,
-						access_token, &result, userinfo_jwt) == FALSE) {
+						refreshed_access_token, &result, userinfo_jwt) == FALSE) {
 
 					oidc_error(r,
 							"resolving user info claims with the refreshed access token failed, nothing will be stored in the session");
@@ -2280,12 +2325,19 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 	/* get a hash value that fingerprints the browser concatenated with the random input */
 	char *state = oidc_get_browser_state_hash(r, nonce);
 
-	/* create state that restores the context when the authorization response comes in; cryptographically bind it to the browser */
-	if (oidc_authorization_request_set_cookie(r, c, state, proto_state) == FALSE)
-		return HTTP_INTERNAL_SERVER_ERROR;
+	/*
+	 * create state that restores the context when the authorization response comes in
+	 * and cryptographically bind it to the browser
+	 */
+	int rc = oidc_authorization_request_set_cookie(r, c, state, proto_state);
+	if (rc != HTTP_OK) {
+		oidc_proto_state_destroy(proto_state);
+		return rc;
+	}
 
 	/*
 	 * printout errors if Cookie settings are not going to work
+	 * TODO: separate this code out into its own function
 	 */
 	apr_uri_t o_uri;
 	memset(&o_uri, 0, sizeof(apr_uri_t));
@@ -2298,6 +2350,7 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 		oidc_error(r,
 				"the URL scheme (%s) of the configured " OIDCRedirectURI " does not match the URL scheme of the URL being accessed (%s): the \"state\" and \"session\" cookies will not be shared between the two!",
 				r_uri.scheme, o_uri.scheme);
+		oidc_proto_state_destroy(proto_state);
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
@@ -2308,6 +2361,7 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 				oidc_error(r,
 						"the URL hostname (%s) of the configured " OIDCRedirectURI " does not match the URL hostname of the URL being accessed (%s): the \"state\" and \"session\" cookies will not be shared between the two!",
 						r_uri.hostname, o_uri.hostname);
+				oidc_proto_state_destroy(proto_state);
 				return HTTP_INTERNAL_SERVER_ERROR;
 			}
 		}
@@ -2316,6 +2370,7 @@ static int oidc_authenticate_user(request_rec *r, oidc_cfg *c,
 			oidc_error(r,
 					"the domain (%s) configured in " OIDCCookieDomain " does not match the URL hostname (%s) of the URL being accessed (%s): setting \"state\" and \"session\" cookies will not work!!",
 					c->cookie_domain, o_uri.hostname, original_url);
+			oidc_proto_state_destroy(proto_state);
 			return HTTP_INTERNAL_SERVER_ERROR;
 		}
 	}
@@ -3395,7 +3450,7 @@ static int oidc_check_mixed_userid_oauth(request_rec *r, oidc_cfg *c) {
 	/* get the bearer access token from the Authorization header */
 	const char *access_token = NULL;
 	if (oidc_oauth_get_bearer_token(r, &access_token) == TRUE)
-		return oidc_oauth_check_userid(r, c);
+		return oidc_oauth_check_userid(r, c, access_token);
 
 	/* no bearer token found: then treat this as a regular OIDC browser request */
 	return oidc_check_userid_openidc(r, c);
@@ -3425,7 +3480,7 @@ int oidc_check_user_id(request_rec *r) {
 	/* see if we've configured OAuth 2.0 access control for this request */
 	if (apr_strnatcasecmp((const char *) ap_auth_type(r),
 			OIDC_AUTH_TYPE_OPENID_OAUTH20) == 0)
-		return oidc_oauth_check_userid(r, c);
+		return oidc_oauth_check_userid(r, c, NULL);
 
 	/* see if we've configured "mixed mode" for this request */
 	if (apr_strnatcasecmp((const char *) ap_auth_type(r),

@@ -91,6 +91,22 @@ works in the same way as described for OpenID Connect above. See the [Wiki](http
 For an exhaustive description of all configuration options, see the file `auth_openidc.conf`
 in this directory. This file can also serve as an include file for `httpd.conf`.
 
+Support
+-------
+
+#### Community Support
+For generic questions, see the Wiki pages with Frequently Asked Questions at:  
+  [https://github.com/zmartzone/mod_auth_openidc/wiki](https://github.com/zmartzone/mod_auth_openidc/wiki)  
+There is a Google Group/mailing list at:  
+  [mod_auth_openidc@googlegroups.com](mailto:mod_auth_openidc@googlegroups.com)  
+The corresponding forum/archive is at:  
+  [https://groups.google.com/forum/#!forum/mod_auth_openidc](https://groups.google.com/forum/#!forum/mod_auth_openidc)  
+Any questions/issues should go to the mailing list. The Github issues tracker should be used only for bugs reports and feature requests.
+
+#### Commercial Services
+For commercial Support contracts, Professional Services, Training and use-case specific support you can contact:  
+  [sales@zmartzone.eu](mailto:sales@zmartzone.eu)  
+
 How to Use It  
 -------------
 
@@ -106,6 +122,7 @@ OIDCProviderMetadataURL https://accounts.google.com/.well-known/openid-configura
 OIDCClientID <your-client-id-administered-through-the-google-api-console>
 OIDCClientSecret <your-client-secret-administered-through-the-google-api-console>
 
+# OIDCRedirectURI is a vanity URL that must point to a path protected by this module but must NOT point to any content
 OIDCRedirectURI https://www.example.com/example/redirect_uri
 OIDCCryptoPassphrase <password>
 
@@ -134,6 +151,7 @@ See also the [Wiki page on Keycloak](https://github.com/zmartzone/mod_auth_openi
 
 ```apache
 OIDCProviderMetadataURL https://keycloak.example.net/auth/realms/master/.well-known/openid-configuration
+# OIDCRedirectURI is a vanity URL that must point to a path protected by this module but must NOT point to any content
 OIDCRedirectURI https://www.example.net/oauth2callback
 OIDCCryptoPassphrase random1234
 OIDCClientID <your-client-id-registered-in-keycloak>
@@ -164,6 +182,7 @@ OIDCProviderMetadataURL <issuer>/.well-known/openid-configuration
 OIDCClientID <client_id>
 OIDCClientSecret <client_secret>
 
+# OIDCRedirectURI is a vanity URL that must point to a path protected by this module but must NOT point to any content
 OIDCRedirectURI https://<hostname>/secure/redirect_uri
 OIDCCryptoPassphrase <password>
 
@@ -250,6 +269,6 @@ Disclaimer
 ----------
 
 *The upstream software is open sourced by ZmartZone IAM. For commercial support, please use the upstream version and
-you can contact [ZmartZone IAM](https://www.zmartzone.eu) as described above.*
+you can contact [ZmartZone IAM](https://www.zmartzone.eu) as described above in the [Support](#support) section.*
 
 Any questions/issues for this fork should go to the Github issues tracker directly.

@@ -1,3 +1,40 @@
+09/12/2018
+- fix return result FALSE when JWT payload parsing fails; see #389; thanks @amdonov
+- release 2.3.8
+
+08/30/2018
+- add LGTM code quality badges, see #385; thanks @xcorail
+- fix 3 LGTM alerts
+
+08/23/2018
+- improve auto-detection of XMLHttpRequests via Accept header; see #331
+- bump to 2.3.8rc5
+
+08/15/2018
+- initialize test_proto_authorization_request properly; see #382; thanks @jdennis
+- add sanity check on provider->auth_request_method; closes #382; thanks @jdennis
+- bump to 2.3.8rc4
+
+08/14/2018
+- allow usage with LibreSSL; closes #380; thanks @hihellobolke
+- bump to 2.3.8rc3
+
+08/04/2018
+- don't return content with 503 since it will turn the HTTP status code into a 200; see #331
+- bump to 2.3.8rc2
+
+08/03/2018
+- add option to set an upper limit to the number of concurrent state cookies via OIDCStateMaxNumberOfCookies; see #331
+- make the default maximum number of parallel state cookies 7 instead of unlimited; see #331
+- bump to 2.3.8rc1
+
+07/30/2018
+- fix using access token as endpoint auth method in introspection calls; closes #377; thanks @skauffmann
+
+07/25/2018
+- fix reading access_token form POST parameters when combined with `AuthType auth-openidc`; see #376; thanks Nicolas Salerno
+- bump to 2.3.8rc0
+
 07/06/2018
 - abort when string length for remote user name substitution is larger than 255 characters
 - release 2.3.7
