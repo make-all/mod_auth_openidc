@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2018 ZmartZone IAM
+ * Copyright (C) 2017-2019 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -551,7 +551,6 @@ const char *oidc_valid_max_number_of_state_cookies(apr_pool_t *pool, int v) {
 	return NULL;
 }
 
-
 /*
  * parse a session max duration value from the provided string
  */
@@ -564,8 +563,8 @@ const char *oidc_parse_session_max_duration(apr_pool_t *pool, const char *arg,
 /*
  * parse a base64 encoded binary value from the provided string
  */
-char *oidc_parse_base64(apr_pool_t *pool, const char *input,
-		char **output, int *output_len) {
+char *oidc_parse_base64(apr_pool_t *pool, const char *input, char **output,
+		int *output_len) {
 	int len = apr_base64_decode_len(input);
 	*output = apr_palloc(pool, len);
 	*output_len = apr_base64_decode(*output, input);
@@ -870,7 +869,8 @@ const char *oidc_parse_accept_oauth_token_in(apr_pool_t *pool, const char *arg,
 		*b_value |= v;
 
 	if (v == OIDC_OAUTH_ACCEPT_TOKEN_IN_COOKIE) {
-		apr_hash_set(list_options, OIDC_OAUTH_ACCEPT_TOKEN_IN_OPTION_COOKIE_NAME,
+		apr_hash_set(list_options,
+				OIDC_OAUTH_ACCEPT_TOKEN_IN_OPTION_COOKIE_NAME,
 				APR_HASH_KEY_STRING, p);
 	}
 
@@ -1248,7 +1248,34 @@ const char *oidc_parse_auth_request_method(apr_pool_t *pool, const char *arg,
  * parse the maximum number of parallel state cookies
  */
 const char *oidc_parse_max_number_of_state_cookies(apr_pool_t *pool,
+		const char *arg1, const char *arg2, int *int_value, int *bool_value) {
+	const char *rv = NULL;
+
+	rv = oidc_parse_int_valid(pool, arg1, int_value,
+			oidc_valid_max_number_of_state_cookies);
+	if ((rv == NULL) && (arg2 != NULL))
+		rv = oidc_parse_boolean(pool, arg2, bool_value);
+	return rv;
+}
+
+#define OIDC_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY_MIN 0
+#define OIDC_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY_MAX 3600 * 24 * 365
+
+/*
+ * check the boundaries for the refresh access token expiry TTL
+ */
+const char *oidc_valid_refresh_access_token_before_expiry(apr_pool_t *pool,
+		int v) {
+	return oidc_valid_int_min_max(pool, v,
+			OIDC_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY_MIN,
+			OIDC_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY_MAX);
+}
+
+/*
+ * parse an access token expiry TTL from the provided string
+ */
+const char *oidc_parse_refresh_access_token_before_expiry(apr_pool_t *pool,
 		const char *arg, int *int_value) {
 	return oidc_parse_int_valid(pool, arg, int_value,
-			oidc_valid_max_number_of_state_cookies);
+			oidc_valid_refresh_access_token_before_expiry);
 }

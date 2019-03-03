@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2018 ZmartZone IAM
+ * Copyright (C) 2017-2019 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -106,6 +106,8 @@
 #define OIDC_DEFAULT_STATE_TIMEOUT 300
 /* maximum number of parallel state cookies; 0 means unlimited, until the browser or server gives up */
 #define OIDC_DEFAULT_MAX_NUMBER_OF_STATE_COOKIES 7
+/* default setting for deleting the oldest state cookies */
+#define OIDC_DEFAULT_DELETE_OLDEST_STATE_COOKIES 0
 /* default session inactivity timeout */
 #define OIDC_DEFAULT_SESSION_INACTIVITY_TIMEOUT 300
 /* default session max duration */
@@ -166,6 +168,8 @@
 #define OIDC_DEFAULT_AUTH_REQUEST_METHOD OIDC_AUTH_REQUEST_METHOD_GET
 /* define whether the issuer will be added to the redirect uri by default to mitigate the IDP mixup attack */
 #define OIDC_DEFAULT_PROVIDER_ISSUER_SPECIFIC_REDIRECT_URI 0
+/* define the default number of seconds that the access token needs to be valid for; -1 = no refresh */
+#define OIDC_DEFAULT_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY -1
 
 #define OIDCProviderMetadataURL              "OIDCProviderMetadataURL"
 #define OIDCProviderIssuer                   "OIDCProviderIssuer"
@@ -264,6 +268,7 @@
 #define OIDCBlackListedClaims                "OIDCBlackListedClaims"
 #define OIDCOAuthServerMetadataURL           "OIDCOAuthServerMetadataURL"
 #define OIDCOAuthAccessTokenBindingPolicy      "OIDCOAuthAccessTokenBindingPolicy"
+#define OIDCRefreshAccessTokenBeforeExpiry     "OIDCRefreshAccessTokenBeforeExpiry"
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -288,6 +293,7 @@ typedef struct oidc_dir_cfg {
 	int pass_refresh_token;
 	char *path_auth_request_params;
 	char *path_scope;
+	int refresh_access_token_before_expiry;
 } oidc_dir_cfg;
 
 #define OIDC_CONFIG_DIR_RV(cmd, rv) rv != NULL ? apr_psprintf(cmd->pool, "Invalid value for directive '%s': %s", cmd->directive->directive, rv) : NULL
@@ -1008,11 +1014,12 @@ static const char *oidc_set_client_auth_bearer_token(cmd_parms *cmd,
  * set the maximun number of parallel state cookies
  */
 static const char *oidc_set_max_number_of_state_cookies(cmd_parms *cmd,
-		void *struct_ptr, const char *arg) {
+		void *struct_ptr, const char *arg1, const char *arg2) {
 	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
 			cmd->server->module_config, &auth_openidc_module);
-	const char *rv = oidc_parse_max_number_of_state_cookies(cmd->pool, arg,
-			&cfg->max_number_of_state_cookies);
+	const char *rv = oidc_parse_max_number_of_state_cookies(cmd->pool, arg1,
+			arg2, &cfg->max_number_of_state_cookies,
+			&cfg->delete_oldest_state_cookies);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
@@ -1023,6 +1030,34 @@ int oidc_cfg_max_number_of_state_cookies(oidc_cfg *cfg) {
 	if (cfg->max_number_of_state_cookies == OIDC_CONFIG_POS_INT_UNSET)
 		return OIDC_DEFAULT_MAX_NUMBER_OF_STATE_COOKIES;
 	return cfg->max_number_of_state_cookies;
+}
+
+/*
+ * return the number of oldest state cookies that need to be deleted
+ */
+int oidc_cfg_delete_oldest_state_cookies(oidc_cfg *cfg) {
+	if (cfg->delete_oldest_state_cookies == OIDC_CONFIG_POS_INT_UNSET)
+		return OIDC_DEFAULT_DELETE_OLDEST_STATE_COOKIES;
+	return cfg->delete_oldest_state_cookies;
+}
+
+/*
+ * set the time in seconds that the access token needs to be valid for
+ */
+static const char * oidc_set_refresh_access_token_before_expiry(cmd_parms *cmd,
+		void *m, const char *arg) {
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	const char *rv = oidc_parse_refresh_access_token_before_expiry(cmd->pool,
+			arg, &dir_cfg->refresh_access_token_before_expiry);
+	return OIDC_CONFIG_DIR_RV(cmd, rv);
+}
+
+int oidc_cfg_dir_refresh_access_token_before_expiry(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	if (dir_cfg->refresh_access_token_before_expiry == OIDC_CONFIG_POS_INT_UNSET)
+		return OIDC_DEFAULT_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY;
+	return dir_cfg->refresh_access_token_before_expiry;
 }
 
 /*
@@ -1139,6 +1174,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->http_timeout_short = OIDC_DEFAULT_HTTP_TIMEOUT_SHORT;
 	c->state_timeout = OIDC_DEFAULT_STATE_TIMEOUT;
 	c->max_number_of_state_cookies = OIDC_CONFIG_POS_INT_UNSET;
+	c->delete_oldest_state_cookies = OIDC_CONFIG_POS_INT_UNSET;
 	c->session_inactivity_timeout = OIDC_DEFAULT_SESSION_INACTIVITY_TIMEOUT;
 
 	c->cookie_domain = NULL;
@@ -1474,6 +1510,10 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->max_number_of_state_cookies != OIDC_CONFIG_POS_INT_UNSET ?
 					add->max_number_of_state_cookies :
 					base->max_number_of_state_cookies;
+	c->delete_oldest_state_cookies =
+			add->delete_oldest_state_cookies != OIDC_CONFIG_POS_INT_UNSET ?
+					add->delete_oldest_state_cookies :
+					base->delete_oldest_state_cookies;
 	c->session_inactivity_timeout =
 			add->session_inactivity_timeout
 			!= OIDC_DEFAULT_SESSION_INACTIVITY_TIMEOUT ?
@@ -1670,6 +1710,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->pass_refresh_token = OIDC_CONFIG_POS_INT_UNSET;
 	c->path_auth_request_params = NULL;
 	c->path_scope = NULL;
+	c->refresh_access_token_before_expiry = OIDC_CONFIG_POS_INT_UNSET;
 	return (c);
 }
 
@@ -1871,6 +1912,11 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 					base->path_auth_request_params;
 	c->path_scope =
 			add->path_scope != NULL ? add->path_scope : base->path_scope;
+
+	c->refresh_access_token_before_expiry =
+			add->refresh_access_token_before_expiry != OIDC_CONFIG_POS_INT_UNSET ?
+					add->refresh_access_token_before_expiry :
+					base->refresh_access_token_before_expiry;
 
 	return (c);
 }
@@ -2690,11 +2736,11 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_cfg, state_timeout),
 				RSRC_CONF,
 				"Time to live in seconds for state parameter (cq. interval in which the authorization request and the corresponding response need to be completed)."),
-		AP_INIT_TAKE1(OIDCStateMaxNumberOfCookies,
+		AP_INIT_TAKE12(OIDCStateMaxNumberOfCookies,
 				oidc_set_max_number_of_state_cookies,
 				(void*)APR_OFFSETOF(oidc_cfg, max_number_of_state_cookies),
 				RSRC_CONF,
-				"Maximun number of parallel state cookies i.e. outstanding authorization requests."),
+				"Maximun number of parallel state cookies i.e. outstanding authorization requests and whether to delete the oldest cookie(s)."),
 		AP_INIT_TAKE1(OIDCSessionInactivityTimeout,
 				oidc_set_session_inactivity_timeout,
 				(void*)APR_OFFSETOF(oidc_cfg, session_inactivity_timeout),
@@ -2896,6 +2942,12 @@ const command_rec oidc_config_cmds[] = {
 				(void *)APR_OFFSETOF(oidc_cfg, oauth.access_token_binding_policy),
 				RSRC_CONF,
 				"The token binding policy used for access tokens; must be one of [disabled|optional|required|enforced]"),
+
+		AP_INIT_TAKE1(OIDCRefreshAccessTokenBeforeExpiry,
+				oidc_set_refresh_access_token_before_expiry,
+				(void *)APR_OFFSETOF(oidc_dir_cfg, refresh_access_token_before_expiry),
+				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
+				"Ensure the access token is valid for at least <x> seconds by refreshing it if required."),
 
 		{ NULL }
 };

@@ -1,3 +1,29 @@
+01/22/2019
+- fix XSS vulnerability CSNC-2019-001 wrt. poll parameter in OIDC Session Management RP iframe; thanks Mischa Bachmann
+- release 2.3.10.2
+
+01/16/2019
+- fix bug in current URL detection where query parameters would be duplicated; see #420; thanks @jreynaert
+- release 2.3.10.1
+
+12/31/2018
+- fix warning printout in oidc_delete_oldest_state_cookies
+- release 2.3.10
+
+12/16/2018
+- fix encryption buffer tag length mismatch
+
+12/06/2018
+- retain the unparsed URL path in current/original URL determination, and thereby preserve
+  and support URL-encoded characters in paths when redirecting back to the original URL
+- add state to code exchange token requests only in multi-provider setups; see #402
+- optionally delete the oldest state cookie(s); see #399
+- bump to 2.3.10rc3
+
+11/29/2018
+- add support for refreshing an access token associated with an OIDC session using OIDCRefreshAccessTokenBeforeExpiry
+- bump to 2.3.10rc0
+
 11/15/2018
 - release 2.3.9
 
