@@ -1181,7 +1181,7 @@ static char * test_proto_validate_jwt(request_rec *r) {
 			r->pool, err);
 
 	TST_ASSERT_ERR("oidc_proto_validate_jwt",
-			oidc_proto_validate_jwt(r, jwt, s_issuer, TRUE, TRUE, 10), r->pool,
+			oidc_proto_validate_jwt(r, jwt, s_issuer, TRUE, TRUE, 10, OIDC_TOKEN_BINDING_POLICY_DISABLED), r->pool,
 			err);
 
 	oidc_jwk_destroy(jwk);
@@ -1192,33 +1192,43 @@ static char * test_proto_validate_jwt(request_rec *r) {
 
 static char * test_current_url(request_rec *r) {
 
-	char *url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (1)", url, "https://www.example.com");
+	char *url = NULL;
+
+	r->uri = "/test";
+
+	url = oidc_get_current_url(r);
+	TST_ASSERT_STR("test_current_url (1)", url, "https://www.example.com/test?foo=bar&param1=value1");
 
 	apr_table_set(r->headers_in, "X-Forwarded-Host", "www.outer.com");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (2)", url, "https://www.outer.com");
+	TST_ASSERT_STR("test_current_url (2)", url, "https://www.outer.com/test?foo=bar&param1=value1");
 
 	apr_table_set(r->headers_in, "X-Forwarded-Host", "www.outer.com:654");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (3)", url, "https://www.outer.com:654");
+	TST_ASSERT_STR("test_current_url (3)", url, "https://www.outer.com:654/test?foo=bar&param1=value1");
 
 	apr_table_set(r->headers_in, "X-Forwarded-Port", "321");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (4)", url, "https://www.outer.com:321");
+	TST_ASSERT_STR("test_current_url (4)", url, "https://www.outer.com:321/test?foo=bar&param1=value1");
 
 	apr_table_set(r->headers_in, "X-Forwarded-Proto", "http");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (5)", url, "http://www.outer.com:321");
+	TST_ASSERT_STR("test_current_url (5)", url, "http://www.outer.com:321/test?foo=bar&param1=value1");
 
 	apr_table_set(r->headers_in, "X-Forwarded-Proto", "https , http");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (6)", url, "https://www.outer.com:321");
+	TST_ASSERT_STR("test_current_url (6)", url, "https://www.outer.com:321/test?foo=bar&param1=value1");
 
 	apr_table_unset(r->headers_in, "X-Forwarded-Host");
 	apr_table_unset(r->headers_in, "X-Forwarded-Port");
 	url = oidc_get_current_url(r);
-	TST_ASSERT_STR("test_headers (7)", url, "https://www.example.com");
+	TST_ASSERT_STR("test_current_url (7)", url, "https://www.example.com/test?foo=bar&param1=value1");
+
+	apr_table_set(r->headers_in, "X-Forwarded-Proto", "http ");
+	apr_table_set(r->headers_in, "Host", "remotehost:8380");
+	r->uri = "http://remotehost:8380/private/";
+	url = oidc_get_current_url(r);
+	TST_ASSERT_STR("test_current_url (8)", url, "http://remotehost:8380/private/?foo=bar&param1=value1");
 
 	return 0;
 }
@@ -1292,6 +1302,114 @@ static char * test_accept(request_rec *r) {
 
 	return 0;
 }
+
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+
+static char * test_authz_worker(request_rec *r) {
+	authz_status rc;
+	char *require_args = NULL;
+	json_error_t err;
+	json_t *json = NULL;
+	char *claims = NULL;
+
+	r->user = "dummy";
+
+	claims = "{"
+			"\"sub\": \"stef\","
+			"\"nested\": {"
+			"\"level1\": {"
+			"\"level2\": \"hans\""
+			"},"
+			"\"nestedarray\": ["
+			"\"b\","
+			"\"c\","
+			"true"
+			"],"
+			"\"somebool\": false"
+			"},"
+			"\"somearray\": ["
+			"\"one\","
+			"\"two\","
+			"\"three\""
+			"],"
+			"\"somebool\": false,"
+
+			"\"realm_access\": {"
+			"\"roles\": ["
+			"\"someRole1\","
+			"\"someRole2\""
+			"]"
+			"},"
+
+			"\"resource_access\": {"
+			"\"someClient\": {"
+			"\"roles\": ["
+			"\"someRole3\","
+			"\"someRole4\""
+			"]"
+			"}"
+			"},"
+
+			"\"https://test.com/pay\": \"alot\""
+
+			"}";
+
+	json = json_loads(claims, 0, &err);
+	TST_ASSERT(
+			apr_psprintf(r->pool, "JSON parsed [%s]", json ? "ok" : err.text),
+			json != NULL);
+
+	require_args = "Require claim sub:hans";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (1: simple sub claim)", rc == AUTHZ_DENIED);
+
+	require_args = "Require claim sub:stef";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (2: simple sub claim)", rc == AUTHZ_GRANTED);
+
+	require_args = "Require claim nested.level1.level2:hans";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (3: nested claim)", rc == AUTHZ_GRANTED);
+
+	require_args = "Require claim nested.nestedarray:a";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (4: nested array)", rc == AUTHZ_DENIED);
+
+	require_args = "Require claim nested.nestedarray:c";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (5: nested array)", rc == AUTHZ_GRANTED);
+
+	require_args = "Require claim nested.level1:a";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (6: nested non-string)", rc == AUTHZ_DENIED);
+
+	require_args = "Require claim somebool:a";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (7: non-array)", rc == AUTHZ_DENIED);
+
+	require_args = "Require claim somebool.level1:a";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (8: nested non-array)", rc == AUTHZ_DENIED);
+
+	require_args = "Require claim realm_access.roles:someRole1";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (9: keycloak sample 1)", rc == AUTHZ_GRANTED);
+
+	require_args = "Require claim resource_access.someClient.roles:someRole4";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (10: keycloak sample 2)", rc == AUTHZ_GRANTED);
+
+	require_args = "Require claim https://test.com/pay:alot";
+	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	TST_ASSERT("auth status (11: namespaced key)", rc == AUTHZ_GRANTED);
+
+	json_decref(json);
+
+	return 0;
+}
+
+#endif
+
 static char * all_tests(apr_pool_t *pool, request_rec *r) {
 	char *message;
 	TST_RUN(test_jwt_parse, pool);
@@ -1323,6 +1441,10 @@ static char * all_tests(apr_pool_t *pool, request_rec *r) {
 
 	TST_RUN(test_current_url, r);
 	TST_RUN(test_accept, r);
+
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+	TST_RUN(test_authz_worker, r);
+#endif
 
 	return 0;
 }

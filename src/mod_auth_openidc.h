@@ -73,6 +73,8 @@ APLOG_USE_MODULE(auth_openidc);
 
 #define oidc_log(r, level, fmt, ...) ap_log_rerror(APLOG_MARK, level, 0, r,"%s: %s", __FUNCTION__, apr_psprintf(r->pool, fmt, ##__VA_ARGS__))
 #define oidc_slog(s, level, fmt, ...) ap_log_error(APLOG_MARK, level, 0, s, "%s: %s", __FUNCTION__, apr_psprintf(s->process->pool, fmt, ##__VA_ARGS__))
+//#define oidc_log(r, level, fmt, ...) fprintf(stderr, "# %s: %s\n", __FUNCTION__, apr_psprintf(r->pool, fmt, ##__VA_ARGS__))
+//#define oidc_slog(s, level, fmt, ...) fprintf(stderr, "## %s: %s\n", __FUNCTION__, apr_psprintf(s->process->pool, fmt, ##__VA_ARGS__))
 
 #define oidc_debug(r, fmt, ...) oidc_log(r, OIDC_DEBUG, fmt, ##__VA_ARGS__)
 #define oidc_warn(r, fmt, ...) oidc_log(r, APLOG_WARNING, fmt, ##__VA_ARGS__)
@@ -186,6 +188,7 @@ APLOG_USE_MODULE(auth_openidc);
 /* define the parameter value for the "logout" request that indicates a GET-style logout call from the OP */
 #define OIDC_GET_STYLE_LOGOUT_PARAM_VALUE "get"
 #define OIDC_IMG_STYLE_LOGOUT_PARAM_VALUE "img"
+#define OIDC_BACKCHANNEL_STYLE_LOGOUT_PARAM_VALUE "backchannel"
 
 /* define the name of the cookie/parameter for CSRF protection */
 #define OIDC_CSRF_NAME "x_csrf"
@@ -216,6 +219,8 @@ APLOG_USE_MODULE(auth_openidc);
 
 /* https://tools.ietf.org/html/draft-ietf-tokbind-ttrp-01 */
 #define OIDC_TB_CFG_PROVIDED_ENV_VAR     "Sec-Provided-Token-Binding-ID"
+/* https://www.ietf.org/id/draft-ietf-oauth-mtls-12 */
+#define OIDC_TB_CFG_FINGERPRINT_ENV_VAR  "TB_SSL_CLIENT_CERT_FINGERPRINT"
 
 #define OIDC_TOKEN_BINDING_POLICY_DISABLED  0
 #define OIDC_TOKEN_BINDING_POLICY_OPTIONAL  1
@@ -259,6 +264,7 @@ typedef struct oidc_provider_t {
 	char *client_secret;
 	char *token_endpoint_tls_client_key;
 	char *token_endpoint_tls_client_cert;
+	int backchannel_logout_supported;
 
 	// the next ones function as global default settings too
 	int ssl_validate_server;
@@ -318,6 +324,7 @@ typedef struct oidc_oauth_t {
 	apr_hash_t *verify_shared_keys;
 	char *verify_jwks_uri;
 	apr_hash_t *verify_public_keys;
+	int access_token_binding_policy;
 } oidc_oauth_t;
 
 typedef struct oidc_cfg {
@@ -465,6 +472,7 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token
 #define OIDC_PROTO_REQUEST_OBJECT        "request"
 #define OIDC_PROTO_SESSION_STATE         "session_state"
 #define OIDC_PROTO_ACTIVE                "active"
+#define OIDC_PROTO_LOGOUT_TOKEN          "logout_token"
 
 #define OIDC_PROTO_RESPONSE_TYPE_CODE               "code"
 #define OIDC_PROTO_RESPONSE_TYPE_IDTOKEN            "id_token"
@@ -514,6 +522,11 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r, const char **access_token
 #define OIDC_CLAIM_C_HASH          "c_hash"
 #define OIDC_CLAIM_RFP             "rfp"
 #define OIDC_CLAIM_TARGET_LINK_URI "target_link_uri"
+#define OIDC_CLAIM_CNF             "cnf"
+#define OIDC_CLAIM_CNF_TBH         "tbh"
+#define OIDC_CLAIM_CNF_X5T_S256    "x5t#S256"
+#define OIDC_CLAIM_SID             "sid"
+#define OIDC_CLAIM_EVENTS          "events"
 
 #define OIDC_JWK_X5T       "x5t"
 #define OIDC_JWK_KEYS      "keys"
@@ -618,8 +631,9 @@ apr_array_header_t *oidc_proto_supported_flows(apr_pool_t *pool);
 apr_byte_t oidc_proto_flow_is_supported(apr_pool_t *pool, const char *flow);
 apr_byte_t oidc_proto_validate_authorization_response(request_rec *r, const char *response_type, const char *requested_response_mode, char **code, char **id_token, char **access_token, char **token_type, const char *used_response_mode);
 apr_byte_t oidc_proto_jwt_verify(request_rec *r, oidc_cfg *cfg, oidc_jwt_t *jwt, const oidc_jwks_uri_t *jwks_uri, apr_hash_t *symmetric_keys);
-apr_byte_t oidc_proto_validate_jwt(request_rec *r, oidc_jwt_t *jwt, const char *iss, apr_byte_t exp_is_mandatory, apr_byte_t iat_is_mandatory, int iat_slack);
+apr_byte_t oidc_proto_validate_jwt(request_rec *r, oidc_jwt_t *jwt, const char *iss, apr_byte_t exp_is_mandatory, apr_byte_t iat_is_mandatory, int iat_slack, int token_binding_policy);
 apr_byte_t oidc_proto_generate_nonce(request_rec *r, char **nonce, int len);
+apr_byte_t oidc_proto_validate_aud_and_azp(request_rec *r, oidc_cfg *cfg, oidc_provider_t *provider, oidc_jwt_payload_t *id_token_payload);
 
 apr_byte_t oidc_proto_authorization_response_code_idtoken_token(request_rec *r, oidc_cfg *c, oidc_proto_state_t *proto_state, oidc_provider_t *provider, apr_table_t *params, const char *response_mode, oidc_jwt_t **jwt);
 apr_byte_t oidc_proto_authorization_response_code_idtoken(request_rec *r, oidc_cfg *c, oidc_proto_state_t *proto_state, oidc_provider_t *provider, apr_table_t *params, const char *response_mode, oidc_jwt_t **jwt);
@@ -792,6 +806,7 @@ void oidc_util_hdr_out_location_set(const request_rec *r, const char *value);
 const char *oidc_util_hdr_out_location_get(const request_rec *r);
 void oidc_util_hdr_err_out_add(const request_rec *r, const char *name, const char *value);
 apr_byte_t oidc_util_hdr_in_accept_contains(const request_rec *r, const char *needle);
+apr_byte_t oidc_util_json_validate_cnf(request_rec *r, json_t *jwt, int token_binding_policy);
 
 // oidc_metadata.c
 apr_byte_t oidc_metadata_provider_retrieve(request_rec *r, oidc_cfg *cfg, const char *issuer, const char *url, json_t **j_metadata, char **response);
@@ -808,6 +823,7 @@ typedef struct {
     const char *remote_user;                  /* user who owns this particular session */
     json_t *state;                            /* the state for this session, encoded in a JSON object */
     apr_time_t expiry;                        /* if > 0, the time of expiry of this session */
+    const char *sid;
 } oidc_session_t;
 
 apr_byte_t oidc_session_load(request_rec *r, oidc_session_t **z);

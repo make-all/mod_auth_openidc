@@ -68,6 +68,8 @@ static apr_byte_t oidc_authz_match_value(request_rec *r, const char *spec_c,
 
 	int i = 0;
 
+	oidc_debug(r, "matching: spec_c=%s, key=%s", spec_c, key);
+
 	/* see if it is a string and it (case-insensitively) matches the Require'd value */
 	if (json_is_string(val)) {
 
@@ -185,8 +187,8 @@ static apr_byte_t oidc_authz_match_expression(request_rec *r,
 /*
  * see if a the Require value matches with a set of provided claims
  */
-apr_byte_t oidc_authz_match_claim(request_rec *r,
-		const char * const attr_spec, const json_t * const claims) {
+apr_byte_t oidc_authz_match_claim(request_rec *r, const char * const attr_spec,
+		const json_t * const claims) {
 
 	const char *key;
 	json_t *val;
@@ -237,14 +239,25 @@ apr_byte_t oidc_authz_match_claim(request_rec *r,
 			/* skip the dot */
 			spec_c++;
 
-			if (!json_is_object(val)) {
-				oidc_warn(r, "\"%s\" matched, and child nodes should be evaluated, but value is not an object.", key);
+			if (json_is_object(val)) {
+				oidc_debug(r,
+						"attribute chunk matched, evaluating children of key: \"%s\".",
+						key);
+				return oidc_authz_match_claim(r, spec_c,
+						json_object_get(claims, key));
+			} else if (json_is_array(val)) {
+				oidc_debug(r,
+						"attribute chunk matched, evaluating array values of key: \"%s\".",
+						key);
+				return oidc_authz_match_value(r, spec_c,
+						json_object_get(claims, key), key);
+			} else {
+				oidc_warn(r,
+						"\"%s\" matched, and child nodes or array values should be evaluated, but value is not an object or array.",
+						key);
 				return FALSE;
 			}
 
-			oidc_debug(r, "Attribute chunk matched. Evaluating children of key: \"%s\".", key);
-
-			return oidc_authz_match_claim(r, spec_c, json_object_get(claims, key));
 		}
 
 		iter = json_object_iter_next((json_t *) claims, iter);
