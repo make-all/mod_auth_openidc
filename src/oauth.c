@@ -168,8 +168,9 @@ static apr_byte_t oidc_oauth_validate_access_token(request_rec *r, oidc_cfg *c,
 	/* add the token endpoint authentication credentials */
 	if (oidc_proto_token_endpoint_auth(r, c,
 			c->oauth.introspection_endpoint_auth, c->oauth.client_id,
-			c->oauth.client_secret, c->oauth.introspection_endpoint_url, params,
-			bearer_access_token_auth, &basic_auth, &bearer_auth) == FALSE)
+			c->oauth.client_secret, NULL, c->oauth.introspection_endpoint_url,
+			params, bearer_access_token_auth, &basic_auth,
+			&bearer_auth) == FALSE)
 		return FALSE;
 
 	/* call the endpoint with the constructed parameter set and return the resulting response */
@@ -263,7 +264,8 @@ apr_byte_t oidc_oauth_get_bearer_token(request_rec *r,
 	if ((*access_token == NULL) && (r->method_number == M_POST)
 			&& (accept_token_in & OIDC_OAUTH_ACCEPT_TOKEN_IN_POST)) {
 		apr_table_t *params = apr_table_make(r->pool, 8);
-		if (oidc_util_read_post_params(r, params) == TRUE) {
+		if (oidc_util_read_post_params(r, params, TRUE,
+				OIDC_PROTO_ACCESS_TOKEN) == TRUE) {
 			*access_token = apr_table_get(params, OIDC_PROTO_ACCESS_TOKEN);
 		}
 	}

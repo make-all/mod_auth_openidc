@@ -83,7 +83,7 @@ Support
 Please consider giving back by sponsoring mod_auth_openidc development/maintenance/continuity and to express
 your gratitude as a happy user or company.  
 See: https://www.patreon.com/mod_auth_openidc  
-Sponsored by: [Auth0](https://auth0.com) and [GLUU](https://www.gluu.org)
+Sponsored by: [GLUU](https://www.gluu.org)
 
 #### Community Support
 For generic questions, see the Wiki pages with Frequently Asked Questions at:  
@@ -170,6 +170,7 @@ See the [Wiki](https://github.com/zmartzone/mod_auth_openidc/wiki) for configura
 - [GLUU Server](https://github.com/zmartzone/mod_auth_openidc/wiki/Gluu-Server)
 - [Keycloak](https://github.com/zmartzone/mod_auth_openidc/wiki/Keycloak)
 - [Azure AD](https://github.com/zmartzone/mod_auth_openidc/wiki/Azure-OAuth2.0-and-OpenID)
+- [Sign in with Apple](https://github.com/zmartzone/mod_auth_openidc/wiki/Sign-in-with-Apple)
 - [LemonLDAP::NG](https://github.com/zmartzone/mod_auth_openidc/wiki/LemonLDAP::NG)
 - [GitLab](https://github.com/zmartzone/mod_auth_openidc/wiki/GitLab-OAuth2)
 - [Globus](https://github.com/zmartzone/mod_auth_openidc/wiki/Globus)

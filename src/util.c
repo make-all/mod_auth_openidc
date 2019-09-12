@@ -502,9 +502,12 @@ char *oidc_get_current_url(request_rec *r) {
 	if ((path) && (path[0] != '/')) {
 		memset(&uri, 0, sizeof(apr_uri_t));
 		if (apr_uri_parse(r->pool, r->uri, &uri) == APR_SUCCESS)
-			path = apr_pstrcat(r->pool, uri.path, (r->args != NULL && *r->args != '\0' ? "?" : ""), r->args, NULL);
+			path = apr_pstrcat(r->pool, uri.path,
+					(r->args != NULL && *r->args != '\0' ? "?" : ""), r->args,
+					NULL);
 		else
-			oidc_warn(r, "apr_uri_parse failed on non-relative URL: %s", r->uri);
+			oidc_warn(r, "apr_uri_parse failed on non-relative URL: %s",
+					r->uri);
 	} else {
 		/* make sure we retain URL-encoded characters original URL that we send the user back to */
 		path = r->unparsed_uri;
@@ -649,7 +652,7 @@ char *oidc_util_http_query_encoded_url(request_rec *r, const char *url,
 /*
  * construct form-encoded POST data
  */
-static char *oidc_util_http_form_encoded_data(request_rec *r,
+char *oidc_util_http_form_encoded_data(request_rec *r,
 		const apr_table_t *params) {
 	char *data = NULL;
 	if ((params != NULL) && (apr_table_elts(params)->nelts > 0)) {
@@ -1332,6 +1335,15 @@ int oidc_util_http_send(request_rec *r, const char *data, size_t data_len,
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 	//r->status = success_rvalue;
+
+	if ((success_rvalue == OK) && (r->user == NULL)) {
+		/*
+		 * satisfy Apache 2.4 mod_authz_core:
+		 * prevent it to return HTTP 500 after sending content
+		 */
+		r->user = "";
+	}
+
 	return success_rvalue;
 }
 
@@ -1488,19 +1500,55 @@ apr_byte_t oidc_util_read_form_encoded_params(request_rec *r,
 	return TRUE;
 }
 
+static void oidc_userdata_set_post_param(request_rec *r,
+		const char *post_param_name, const char *post_param_value) {
+	apr_table_t *userdata_post_params = NULL;
+	apr_pool_userdata_get((void **) &userdata_post_params,
+			OIDC_USERDATA_POST_PARAMS_KEY, r->pool);
+	if (userdata_post_params == NULL)
+		userdata_post_params = apr_table_make(r->pool, 1);
+	apr_table_set(userdata_post_params, post_param_name, post_param_value);
+	apr_pool_userdata_set(userdata_post_params, OIDC_USERDATA_POST_PARAMS_KEY,
+			NULL, r->pool);
+
+}
+
 /*
  * read the POST parameters in to a table
  */
-apr_byte_t oidc_util_read_post_params(request_rec *r, apr_table_t *table) {
+apr_byte_t oidc_util_read_post_params(request_rec *r, apr_table_t *table,
+		apr_byte_t propagate, const char *strip_param_name) {
+	apr_byte_t rc = FALSE;
 	char *data = NULL;
+	const apr_array_header_t *arr = NULL;
+	const apr_table_entry_t *elts = NULL;
+	int i = 0;
+	const char *content_type = NULL;
 
-	if (r->method_number != M_POST)
-		return FALSE;
+	content_type = oidc_util_hdr_in_content_type_get(r);
+	if ((r->method_number != M_POST) || (apr_strnatcmp(content_type,
+			OIDC_CONTENT_TYPE_FORM_ENCODED) != 0))
+		goto end;
 
 	if (oidc_util_read(r, &data) != TRUE)
-		return FALSE;
+		goto end;
 
-	return oidc_util_read_form_encoded_params(r, table, data);
+	rc = oidc_util_read_form_encoded_params(r, table, data);
+	if (rc != TRUE)
+		goto end;
+
+	if (propagate == FALSE)
+		goto end;
+
+	arr = apr_table_elts(table);
+	elts = (const apr_table_entry_t*) arr->elts;
+	for (i = 0; i < arr->nelts; i++)
+		if (apr_strnatcmp(elts[i].key, strip_param_name) != 0)
+			oidc_userdata_set_post_param(r, elts[i].key, elts[i].val);
+
+	end:
+
+	return rc;
 }
 
 /*
@@ -1690,8 +1738,6 @@ void oidc_util_set_app_info(request_rec *r, const char *s_key,
 		const char *s_value, const char *claim_prefix, apr_byte_t as_header,
 		apr_byte_t as_env_var) {
 
-	apr_table_t *env = NULL;
-
 	/* construct the header name, cq. put the prefix in front of a normalized key name */
 	const char *s_name = apr_psprintf(r->pool, "%s%s", claim_prefix,
 			oidc_normalize_header_name(r, s_key));
@@ -1705,11 +1751,7 @@ void oidc_util_set_app_info(request_rec *r, const char *s_key,
 		oidc_debug(r, "setting environment variable \"%s: %s\"", s_name,
 				s_value);
 
-		apr_pool_userdata_get((void **) &env, OIDC_USERDATA_ENV_KEY, r->pool);
-		if (env == NULL)
-			env = apr_table_make(r->pool, 10);
-		apr_table_set(env, s_name, s_value);
-		apr_pool_userdata_set(env, OIDC_USERDATA_ENV_KEY, NULL, r->pool);
+		apr_table_set(r->subprocess_env, s_name, s_value);
 	}
 }
 
@@ -2334,6 +2376,10 @@ const char *oidc_util_hdr_in_x_forwarded_for_get(const request_rec *r) {
 
 const char *oidc_util_hdr_in_content_type_get(const request_rec *r) {
 	return oidc_util_hdr_in_get(r, OIDC_HTTP_HDR_CONTENT_TYPE);
+}
+
+const char *oidc_util_hdr_in_content_length_get(const request_rec *r) {
+	return oidc_util_hdr_in_get(r, OIDC_HTTP_HDR_CONTENT_LENGTH);
 }
 
 const char *oidc_util_hdr_in_x_requested_with_get(const request_rec *r) {

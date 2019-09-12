@@ -293,6 +293,7 @@ typedef struct oidc_dir_cfg {
 	char *path_auth_request_params;
 	char *path_scope;
 	int refresh_access_token_before_expiry;
+	int logout_on_error_refresh;
 } oidc_dir_cfg;
 
 #define OIDC_CONFIG_DIR_RV(cmd, rv) rv != NULL ? apr_psprintf(cmd->pool, "Invalid value for directive '%s': %s", cmd->directive->directive, rv) : NULL
@@ -1044,11 +1045,20 @@ int oidc_cfg_delete_oldest_state_cookies(oidc_cfg *cfg) {
  * set the time in seconds that the access token needs to be valid for
  */
 static const char * oidc_set_refresh_access_token_before_expiry(cmd_parms *cmd,
-		void *m, const char *arg) {
+		void *m, const char *arg1, const char *arg2) {
 	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
-	const char *rv = oidc_parse_refresh_access_token_before_expiry(cmd->pool,
-			arg, &dir_cfg->refresh_access_token_before_expiry);
-	return OIDC_CONFIG_DIR_RV(cmd, rv);
+	const char *rv1 = oidc_parse_refresh_access_token_before_expiry(cmd->pool,
+			arg1, &dir_cfg->refresh_access_token_before_expiry);
+	if (rv1 != NULL)
+		return apr_psprintf(cmd->pool, "Invalid value for directive '%s': %s", cmd->directive->directive, rv1);
+
+	if (arg2) {
+		const char *rv2 = oidc_parse_logout_on_error_refresh_as(cmd->pool,
+			arg2, &dir_cfg->logout_on_error_refresh);
+		return OIDC_CONFIG_DIR_RV(cmd, rv2);
+	}
+
+	return NULL;
 }
 
 int oidc_cfg_dir_refresh_access_token_before_expiry(request_rec *r) {
@@ -1057,6 +1067,14 @@ int oidc_cfg_dir_refresh_access_token_before_expiry(request_rec *r) {
 	if (dir_cfg->refresh_access_token_before_expiry == OIDC_CONFIG_POS_INT_UNSET)
 		return OIDC_DEFAULT_REFRESH_ACCESS_TOKEN_BEFORE_EXPIRY;
 	return dir_cfg->refresh_access_token_before_expiry;
+}
+
+int oidc_cfg_dir_logout_on_error_refresh(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	if (dir_cfg->logout_on_error_refresh == OIDC_CONFIG_POS_INT_UNSET)
+		return 0; // no mask
+	return dir_cfg->logout_on_error_refresh;
 }
 
 /*
@@ -1106,6 +1124,9 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->provider.pkce = NULL;
 
 	c->provider.client_jwks_uri = NULL;
+	c->provider.client_signing_keys = NULL;
+	c->provider.client_encryption_keys = NULL;
+
 	c->provider.id_token_signed_response_alg = NULL;
 	c->provider.id_token_encrypted_response_alg = NULL;
 	c->provider.id_token_encrypted_response_enc = NULL;
@@ -1363,6 +1384,15 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->provider.client_jwks_uri != NULL ?
 					add->provider.client_jwks_uri :
 					base->provider.client_jwks_uri;
+	c->provider.client_signing_keys =
+			add->provider.client_signing_keys != NULL ?
+					add->provider.client_signing_keys :
+					base->provider.client_signing_keys;
+	c->provider.client_encryption_keys =
+			add->provider.client_encryption_keys != NULL ?
+					add->provider.client_encryption_keys :
+					base->provider.client_encryption_keys;
+
 	c->provider.id_token_signed_response_alg =
 			add->provider.id_token_signed_response_alg != NULL ?
 					add->provider.id_token_signed_response_alg :
@@ -1714,6 +1744,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->path_auth_request_params = NULL;
 	c->path_scope = NULL;
 	c->refresh_access_token_before_expiry = OIDC_CONFIG_POS_INT_UNSET;
+	c->logout_on_error_refresh = OIDC_CONFIG_POS_INT_UNSET;
 	return (c);
 }
 
@@ -1921,6 +1952,11 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 					add->refresh_access_token_before_expiry :
 					base->refresh_access_token_before_expiry;
 
+	c->logout_on_error_refresh =
+			add->logout_on_error_refresh != OIDC_CONFIG_POS_INT_UNSET ?
+					add->logout_on_error_refresh :
+					base->logout_on_error_refresh;
+
 	return (c);
 }
 
@@ -2012,7 +2048,8 @@ static int oidc_check_config_oauth(server_rec *s, oidc_cfg *c) {
 
 	apr_uri_t r_uri;
 
-	oidc_swarn(s, "The OAuth 2.0 Resource Server functionality is deprecated and superseded by a new module, see: https://github.com/zmartzone/mod_oauth2!");
+	oidc_swarn(s,
+			"The OAuth 2.0 Resource Server functionality is deprecated and superseded by a new module, see: https://github.com/zmartzone/mod_oauth2!");
 
 	if (c->oauth.metadata_url != NULL) {
 		apr_uri_parse(s->process->pconf, c->oauth.metadata_url, &r_uri);
@@ -2324,21 +2361,95 @@ static void oidc_child_init(apr_pool_t *p, server_rec *s) {
 	apr_pool_cleanup_register(p, s, oidc_cleanup_child, apr_pool_cleanup_null);
 }
 
-/*
- * fixup handler: be authoritative for environment variables at late processing
- */
-static int oidc_auth_fixups(request_rec *r) {
-	apr_table_t *env = NULL;
-	apr_pool_userdata_get((void **) &env, OIDC_USERDATA_ENV_KEY, r->pool);
-	if ((env == NULL) || apr_is_empty_table(env))
-		return DECLINED;
+static const char oidcFilterName[] = "oidc_filter_in_filter";
 
-	oidc_debug(r, "overlaying env with %d elements",
-			apr_table_elts(env)->nelts);
+static void oidc_filter_in_insert_filter(request_rec *r) {
 
-	r->subprocess_env = apr_table_overlay(r->pool, r->subprocess_env, env);
+	if (oidc_enabled(r) == FALSE)
+		return;
 
-	return OK;
+	if (ap_is_initial_req(r) == 0)
+		return;
+
+	apr_table_t *userdata_post_params = NULL;
+	apr_pool_userdata_get((void **) &userdata_post_params,
+			OIDC_USERDATA_POST_PARAMS_KEY, r->pool);
+	if (userdata_post_params == NULL)
+		return;
+
+	ap_add_input_filter(oidcFilterName, NULL, r, r->connection);
+}
+
+typedef struct oidc_filter_in_context {
+	apr_bucket_brigade *pbbTmp;
+	apr_size_t nbytes;
+} oidc_filter_in_context;
+
+static apr_status_t oidc_filter_in_filter(ap_filter_t *f,
+		apr_bucket_brigade *brigade, ap_input_mode_t mode,
+		apr_read_type_e block, apr_off_t nbytes) {
+	oidc_filter_in_context *ctx = NULL;
+	apr_bucket *b_in = NULL, *b_out = NULL;
+	char *buf = NULL;
+	apr_table_t *userdata_post_params = NULL;
+	apr_status_t rc = APR_SUCCESS;
+
+	if (!(ctx = f->ctx)) {
+		f->ctx = ctx = apr_palloc(f->r->pool, sizeof *ctx);
+		ctx->pbbTmp = apr_brigade_create(f->r->pool,
+				f->r->connection->bucket_alloc);
+		ctx->nbytes = 0;
+	}
+
+	if (APR_BRIGADE_EMPTY(ctx->pbbTmp)) {
+		rc = ap_get_brigade(f->next, ctx->pbbTmp, mode, block, nbytes);
+
+		if (mode == AP_MODE_EATCRLF || rc != APR_SUCCESS)
+			return rc;
+	}
+
+	while (!APR_BRIGADE_EMPTY(ctx->pbbTmp)) {
+
+		b_in = APR_BRIGADE_FIRST(ctx->pbbTmp);
+
+		if (APR_BUCKET_IS_EOS(b_in)) {
+
+			APR_BUCKET_REMOVE(b_in);
+
+			apr_pool_userdata_get((void **) &userdata_post_params,
+					OIDC_USERDATA_POST_PARAMS_KEY, f->r->pool);
+
+			if (userdata_post_params != NULL) {
+				buf = apr_psprintf(f->r->pool, "%s%s",
+						ctx->nbytes > 0 ? "&" : "",
+								oidc_util_http_form_encoded_data(f->r,
+										userdata_post_params));
+				b_out = apr_bucket_heap_create(buf, strlen(buf), 0,
+						f->r->connection->bucket_alloc);
+
+				APR_BRIGADE_INSERT_TAIL(brigade, b_out);
+
+				ctx->nbytes += strlen(buf);
+
+				if (oidc_util_hdr_in_content_length_get(f->r) != NULL)
+					oidc_util_hdr_in_set(f->r, OIDC_HTTP_HDR_CONTENT_LENGTH,
+							apr_psprintf(f->r->pool, "%ld", ctx->nbytes));
+
+				apr_pool_userdata_set(NULL, OIDC_USERDATA_POST_PARAMS_KEY,
+						NULL, f->r->pool);
+			}
+
+			APR_BRIGADE_INSERT_TAIL(brigade, b_in);
+
+			break;
+		}
+
+		APR_BUCKET_REMOVE(b_in);
+		APR_BRIGADE_INSERT_TAIL(brigade, b_in);
+		ctx->nbytes += b_in->length;
+	}
+
+	return rc;
 }
 
 /*
@@ -2348,7 +2459,10 @@ void oidc_register_hooks(apr_pool_t *pool) {
 	ap_hook_post_config(oidc_post_config, NULL, NULL, APR_HOOK_LAST);
 	ap_hook_child_init(oidc_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_handler(oidc_content_handler, NULL, NULL, APR_HOOK_MIDDLE);
-	ap_hook_fixups(oidc_auth_fixups, NULL, NULL, APR_HOOK_MIDDLE);
+	ap_hook_insert_filter(oidc_filter_in_insert_filter, NULL, NULL,
+			APR_HOOK_MIDDLE);
+	ap_register_input_filter(oidcFilterName, oidc_filter_in_filter, NULL,
+			AP_FTYPE_RESOURCE);
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	ap_hook_check_authn(oidc_check_user_id, NULL, NULL, APR_HOOK_MIDDLE,
 			AP_AUTH_INTERNAL_PER_CONF);
@@ -2952,11 +3066,11 @@ const command_rec oidc_config_cmds[] = {
 				RSRC_CONF,
 				"The token binding policy used for access tokens; must be one of [disabled|optional|required|enforced]"),
 
-		AP_INIT_TAKE1(OIDCRefreshAccessTokenBeforeExpiry,
+		AP_INIT_TAKE12(OIDCRefreshAccessTokenBeforeExpiry,
 				oidc_set_refresh_access_token_before_expiry,
 				(void *)APR_OFFSETOF(oidc_dir_cfg, refresh_access_token_before_expiry),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
-				"Ensure the access token is valid for at least <x> seconds by refreshing it if required."),
+				"Ensure the access token is valid for at least <x> seconds by refreshing it if required; must be: <x> [logout_on_error]; the logout_on_error performs a logout on refresh error."),
 
 		{ NULL }
 };

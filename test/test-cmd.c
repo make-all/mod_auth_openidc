@@ -66,7 +66,7 @@
 
 int usage(int argc, char **argv, const char *msg) {
 	fprintf(stderr, "Usage: %s %s\n", argv[0],
-			msg ? msg : "[ sign | verify | jwk2cert | key2jwk | enckey | hash_base64url | timestamp | uuid ] <options>");
+			msg ? msg : "[ sign | verify | decrypt | jwk2cert | key2jwk | enckey | hash_base64url | timestamp | uuid ] <options>");
 	return -1;
 }
 
@@ -186,16 +186,17 @@ int verify(int argc, char **argv, apr_pool_t *pool) {
 		return -1;
 	}
 
-	cjose_jwk_t *jwk = cjose_jwk_import(s_jwk, strlen(s_jwk), &cjose_err);
+	oidc_jose_error_t oidc_err;
+	oidc_jwk_t *jwk = oidc_jwk_parse(pool, s_jwk, &oidc_err);
 	if (jwk == NULL) {
 		fprintf(stderr,
-				"could not import JWK: %s [file: %s, function: %s, line: %ld]\n",
-				cjose_err.message, cjose_err.file, cjose_err.function,
-				cjose_err.line);
+				"could not import JWK: %s [file: %s, function: %s, line: %d]\n",
+				oidc_err.text, oidc_err.source, oidc_err.function,
+				oidc_err.line);
 		return -1;
 	}
 
-	if (cjose_jws_verify(jws, jwk, &cjose_err) == FALSE) {
+	if (cjose_jws_verify(jws, jwk->cjose_jwk, &cjose_err) == FALSE) {
 		fprintf(stderr,
 				"could not verify JWS: %s [file: %s, function: %s, line: %ld]\n",
 				cjose_err.message, cjose_err.file, cjose_err.function,
@@ -217,10 +218,53 @@ int verify(int argc, char **argv, apr_pool_t *pool) {
 	fprintf(stdout, "%s", plaintext);
 
 	cjose_jws_release(jws);
-	cjose_jwk_release(jwk);
+	oidc_jwk_destroy(jwk);
 
 	return 0;
 }
+
+int decrypt(int argc, char **argv, apr_pool_t *pool) {
+
+	if (argc <= 3)
+		return usage(argc, argv, "decrypt <serialized-jwt-file> <jwk-file>");
+
+	char *s_jwt = NULL, *s_jwk = NULL;
+
+	if (file_read(pool, argv[2], &s_jwt) != 0)
+		return -1;
+	if (file_read(pool, argv[3], &s_jwk) != 0)
+		return -1;
+
+
+	apr_hash_t *keys = apr_hash_make(pool);
+	oidc_jose_error_t oidc_err;
+
+	oidc_jwk_t *jwk = oidc_jwk_parse(pool, s_jwk, &oidc_err);
+	if (jwk == NULL) {
+		fprintf(stderr,
+				"could not import JWK: %s [file: %s, function: %s, line: %d]\n",
+				oidc_err.text, oidc_err.source, oidc_err.function,
+				oidc_err.line);
+		return -1;
+	}
+
+	apr_hash_set(keys, jwk->kid ? jwk->kid : "dummy", APR_HASH_KEY_STRING, jwk);
+
+	char *plaintext = NULL;
+	if (oidc_jwe_decrypt(pool, s_jwt, keys, &plaintext, &oidc_err, TRUE) == FALSE) {
+		fprintf(stderr,
+				"oidc_jwe_decrypt failed: %s [file: %s, function: %s, line: %d]\n",
+				oidc_err.text, oidc_err.source, oidc_err.function,
+				oidc_err.line);
+		return -1;
+	}
+
+	fprintf(stdout, "%s", plaintext);
+	oidc_jwk_destroy(jwk);
+
+	return 0;
+}
+
 
 int mkcert(RSA *rsa, X509 **x509p, EVP_PKEY **pkeyp, int serial, int days) {
 	X509 *x;
@@ -325,13 +369,15 @@ int key2jwk(int argc, char **argv, apr_pool_t *pool) {
 	int is_private_key = (argc > 3);
 
 	if (is_private_key) {
-		if (oidc_jwk_parse_rsa_private_key(pool, NULL, argv[2], &jwk, &err) == FALSE) {
+		if (oidc_jwk_parse_rsa_private_key(pool, NULL, argv[2], &jwk,
+				&err) == FALSE) {
 			fprintf(stderr, "oidc_jwk_parse_rsa_private_key failed: %s",
 					oidc_jose_e2s(pool, err));
 			return -1;
 		}
 	} else {
-		if (oidc_jwk_parse_rsa_public_key(pool, NULL, argv[2], &jwk, &err) == FALSE) {
+		if (oidc_jwk_parse_rsa_public_key(pool, NULL, argv[2], &jwk,
+				&err) == FALSE) {
 			fprintf(stderr, "oidc_jwk_parse_rsa_public_key failed: %s",
 					oidc_jose_e2s(pool, err));
 			return -1;
@@ -457,7 +503,8 @@ int enckey(int argc, char **argv, apr_pool_t *pool) {
 
 int hash_base64url(int argc, char **argv, apr_pool_t *pool) {
 	if (argc <= 2)
-		return usage(argc, argv, "hash_base64url <string> [algo] [base64url-decode-first]");
+		return usage(argc, argv,
+				"hash_base64url <string> [algo] [base64url-decode-first]");
 
 	char *algo = argc > 3 ? argv[3] : "sha256";
 	int base64url_decode_first = argc > 4 ? (strcmp(argv[4], "yes") == 0) : 0;
@@ -470,20 +517,21 @@ int hash_base64url(int argc, char **argv, apr_pool_t *pool) {
 		uint8_t *bytes = NULL;
 		size_t outlen = 0;
 		cjose_err err;
-		if (cjose_base64url_decode(argv[2], strlen(argv[2]), &bytes, &outlen, &err) == FALSE) {
+		if (cjose_base64url_decode(argv[2], strlen(argv[2]), &bytes, &outlen,
+				&err) == FALSE) {
 			fprintf(stderr, "cjose_base64_decode failed: %s", err.message);
 			return -1;
 		}
-		if (oidc_jose_hash_and_base64url_encode(r->pool,
-				algo, (const char *)bytes, outlen,
-				&output) == FALSE) {
+		if (oidc_jose_hash_and_base64url_encode(r->pool, algo,
+				(const char *) bytes, outlen, &output) == FALSE) {
 			fprintf(stderr, "oidc_jose_hash_and_base64url_encode failed");
 			return -1;
 		}
 	} else {
 		if (oidc_util_hash_string_and_base64url_encode(r, algo, argv[2],
 				&output) == FALSE) {
-			fprintf(stderr, "oidc_util_hash_string_and_base64url_encode failed");
+			fprintf(stderr,
+					"oidc_util_hash_string_and_base64url_encode failed");
 			return -1;
 		}
 	}
@@ -565,6 +613,9 @@ int main(int argc, char **argv, char **env) {
 
 	if (strcmp(argv[1], "verify") == 0)
 		return verify(argc, argv, pool);
+
+	if (strcmp(argv[1], "decrypt") == 0)
+		return decrypt(argc, argv, pool);
 
 	if (strcmp(argv[1], "jwk2cert") == 0)
 		return jwk2cert(argc, argv, pool);

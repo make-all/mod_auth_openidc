@@ -69,6 +69,8 @@
 #define OIDC_PKCE_METHOD_S256         "S256"
 #define OIDC_PKCE_METHOD_REFERRED_TB  "referred_tb"
 
+#define OIDC_ENDPOINT_AUTH_CLIENT_SECRET_BASIC "client_secret_basic"
+
 const char *oidc_valid_url(apr_pool_t *pool, const char *arg, const char *scheme);
 const char *oidc_valid_http_url(apr_pool_t *pool, const char *arg);
 const char *oidc_valid_dir(apr_pool_t *pool, const char *arg);
@@ -103,6 +105,7 @@ const char *oidc_parse_session_max_duration(apr_pool_t *pool, const char *arg, i
 const char *oidc_parse_enc_kid_key_tuple(apr_pool_t *pool, const char *tuple, char **kid, char **key, int *key_len, apr_byte_t triplet);
 const char *oidc_parse_pass_idtoken_as(apr_pool_t *pool, const char *v1, const char *v2, const char *v3, int *int_value);
 const char *oidc_parse_pass_userinfo_as(apr_pool_t *pool, const char *v1, const char *v2, const char *v3, int *int_value);
+const char *oidc_parse_logout_on_error_refresh_as(apr_pool_t *pool, const char *v1, int *int_value);
 const char *oidc_parse_accept_oauth_token_in(apr_pool_t *pool, const char *arg, int *b_value, apr_hash_t *list_options);
 const char *oidc_accept_oauth_token_in2str(apr_pool_t *pool, apr_byte_t v);
 const char *oidc_parse_claim_required(apr_pool_t *pool, const char *arg, int *is_required);
@@ -122,6 +125,6 @@ const char *oidc_parse_refresh_access_token_before_expiry(apr_pool_t *pool, cons
 
 typedef const char *(*oidc_valid_int_function_t)(apr_pool_t *, int);
 typedef const char *(*oidc_valid_function_t)(apr_pool_t *, const char *);
-const char *oidc_valid_string_in_array(apr_pool_t *pool, json_t *json, const char *key, oidc_valid_function_t valid_function, char **value, apr_byte_t optional);
+const char *oidc_valid_string_in_array(apr_pool_t *pool, json_t *json, const char *key, oidc_valid_function_t valid_function, char **value, apr_byte_t optional, const char *preference);
 
 #endif /* MOD_AUTH_OPENIDC_PARSE_H_ */

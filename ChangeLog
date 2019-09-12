@@ -1,7 +1,89 @@
+08/22/2019
+- release 2.4.0
+
+08/16/2019
+- revert 3d95b4a3fbc493c6acc745626ac33143eb4968bf: don't return early from the content handler
+
+08/15/2019
+- be smart about picking the token endpoint authentication method when not configured explicitly:
+  don't choose the first one published by the OP but prefer client_secret_basic if that is listed as well
+  see: panva/node-oidc-provider#514; thanks @richard-drummond and @panva
+- bump to 2.4.0rc24
+
+08/12/2019
+- fix not clearing claims in session when setting claims to null; closes #445; thanks @FilipVujicic
+
+08/12/2019
+- fix JWT decryption crashing on non-null terminated input
+- bump to 2.4.0rc23
+
+08/09/2019
+- add logout_on_error option to OIDCRefreshAccessTokenBeforeExpiry to kill the session when
+  refreshing an access token fails; thanks @rickyepoderi
+- bump to 2.4.0rc22
+
+08/08/2019
+- no longer use the fixup handler for environment variable setting but do it as part of the authn handler
+- bump to 2.4.0rc21
+
+08/04/2019
+- avoid decoding non-form-encoded POST data; closes #443
+- bump to 2.4.0rc20
+
+08/02/2019
+- return DONE from the content handler early to prevent triggering other content handlers
+- fix `OIDCOAuthAcceptTokenAs post` so POST data is propagated and not lost; see #443
+- bump to 2.4.0rc19
+
+07/10/2019
+- fix RSA JWK "x5c" parsing issue (e.g. when parsing "n" fails): explicitly set the "kid" into to JWK
+- bump to 2.4.0rc18
+
+06/19/2019
+- fix regression bug that includes a HTTP 500 message after rendering content
+- bump to 2.4.0rc17
+
+06/14/2019
+- fix regression bug when no per-provider keys have been configured and private_key_jwt is used
+- bump to 2.4.0rc15
+
+06/06/2019
+- use per-provider signing keys in private_key_jwt authentication towards token endpoint
+- bump to 2.4.0rc14
+
+06/05/2019
+- avoid passing empty key set for JWT decryption (solve but introduced in 2.4.0rc12)
+- bump to 2.4.0rc13
+
+06/03/2019
+- enable per-provider signing and encryption keys; limitations:
+  - for request object signing and id_token decryption only
+  - take the first configured key, no kid specification
+  - no publishing of key information on client endpoints
+  - no userinfo JWT decryption
+  - no composite claims decryption
+  - no backchannel logout with encrypted logout token (inherent)
+- bump to 2.4.0rc12
+
+05/31/2019
+- make sure the content handler is called for every request to the configured Redirect URI so all
+  Apache processing is executed (e.g. setting headers with mod_headers) before returning the response
+  thanks Don Sengpiehl (NB: this may affect browser behavior and backwards compatibility)
+- add ability to view session info in HTML via the session info hook: <redirect_uri)?info=html
+- bump to 2.4.0rc11
+
+05/24/2019
+- fix oidc_proto_html_post auto-post-submit so it no longer results in duplicate parentheses
+  closes #440; thanks @gobreak
+- bump to 2.4.0rc10
+
+05/21/2019
+- log the original URL for expired state cookies, useful for debugging SPA/JS issues
+
 05/17/2019
 - allow removing an access token from the cache ("remove_at_cache") when running in OAuth 2.0 RS mode only
-- support refresh and access tokens revocation from an RFC 7009 endpoint upon OIDC session logout (no client auth yet)
-- bump to 2.4.0rc7
+- support refresh and access tokens revocation from an RFC 7009 endpoint upon OIDC session logout
+- bump to 2.4.0rc9
 
 05/03/2019
 - fix (cached) parsing of OIDCOAuthServerMetadataURL; thanks Lance Fannin

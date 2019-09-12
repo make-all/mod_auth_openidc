@@ -661,6 +661,11 @@ static uint8_t *oidc_jwe_decrypt_impl(apr_pool_t *pool, cjose_jwe_t *jwe,
 	const char *kid = cjose_header_get(hdr, CJOSE_HDR_KID, &cjose_err);
 	const char *alg = cjose_header_get(hdr, CJOSE_HDR_ALG, &cjose_err);
 
+	if ((keys == NULL) || (apr_hash_count(keys) == 0)) {
+		oidc_jose_error(err, "no decryption keys configured");
+		return NULL;
+	}
+
 	if (kid != NULL) {
 
 		jwk = apr_hash_get(keys, kid, APR_HASH_KEY_STRING);
@@ -712,8 +717,9 @@ apr_byte_t oidc_jwe_decrypt(apr_pool_t *pool, const char *input_json,
 		uint8_t *decrypted = oidc_jwe_decrypt_impl(pool, jwe, keys,
 				&content_len, err);
 		if (decrypted != NULL) {
-			decrypted[content_len] = '\0';
-			*s_json = apr_pstrdup(pool, (const char *) decrypted);
+			*s_json = apr_pcalloc(pool, content_len + 1);
+			memcpy(*s_json, decrypted, content_len);
+			(*s_json)[content_len] = '\0';
 			cjose_get_dealloc()(decrypted);
 		}
 		cjose_jwe_release(jwe);
@@ -1211,6 +1217,7 @@ static apr_byte_t oidc_jwk_parse_rsa_x5c(apr_pool_t *pool, json_t *json,
 		cjose_jwk_t **jwk, oidc_jose_error_t *err) {
 
 	apr_byte_t rv = FALSE;
+	const char *kid = NULL;
 
 	/* get the "x5c" array element from the JSON object */
 	json_t *v = json_object_get(json, OIDC_JOSE_HDR_X5C);
@@ -1244,7 +1251,8 @@ static apr_byte_t oidc_jwk_parse_rsa_x5c(apr_pool_t *pool, json_t *json,
 	int i = 0;
 	char *s = apr_psprintf(pool, "%s\n", OIDC_JOSE_CERT_BEGIN);
 	while (i < strlen(s_x5c)) {
-		s = apr_psprintf(pool, "%s%s\n", s, apr_pstrmemdup(pool, s_x5c + i, len));
+		s = apr_psprintf(pool, "%s%s\n", s,
+				apr_pstrmemdup(pool, s_x5c + i, len));
 		i += len;
 	}
 	s = apr_psprintf(pool, "%s%s\n", s, OIDC_JOSE_CERT_END);
@@ -1263,8 +1271,13 @@ static apr_byte_t oidc_jwk_parse_rsa_x5c(apr_pool_t *pool, json_t *json,
 		return FALSE;
 	}
 
+	v = json_object_get(json, CJOSE_HDR_KID);
+	if ((v != NULL) && json_is_string(v)) {
+		kid = json_string_value(v);
+	}
+
 	/* do the actual parsing */
-	rv = oidc_jwk_rsa_bio_to_jwk(pool, input, NULL, jwk, FALSE, err);
+	rv = oidc_jwk_rsa_bio_to_jwk(pool, input, kid, jwk, FALSE, err);
 
 	BIO_free(input);
 
