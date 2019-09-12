@@ -1,3 +1,29 @@
+05/17/2019
+- allow removing an access token from the cache ("remove_at_cache") when running in OAuth 2.0 RS mode only
+- bump to 2.4.0rc6
+
+05/03/2019
+- fix (cached) parsing of OIDCOAuthServerMetadataURL; thanks Lance Fannin
+- bump to 2.4.0rc5
+
+05/02/2019
+- correct caching for OIDCOAuthServerMetadataURL
+- bump to 2.4.0rc4
+
+04/21/2019
+- remove option to skip scrubbing request headers (thus avoiding potentionally insecure setups)
+- bump to 2.4.0rc3
+
+04/19/2019
+- add USE_URANDOM compile time option to use /dev/urandom explicitly for non-blocking random number generation
+  configure with APXS2_OPTS="-DUSE_URANDOM"
+- bump to 2.4.0rc2
+
+04/15/2019
+- add debug logs in oidc_proto_generate_random_string
+- URL-encode client_id/client_secret when using client_secret_basic according to: https://tools.ietf.org/html/rfc6749#section-2.3.1
+- bump to 2.4.0rc1
+
 04/09/2019
 - deprecate the OAuth 2.0 Resource Server functionality
 - bump to 2.4.0rc0

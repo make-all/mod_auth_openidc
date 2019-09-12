@@ -60,7 +60,69 @@
 #include <openssl/opensslconf.h>
 #include <openssl/opensslv.h>
 
+#ifdef USE_URANDOM
+
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#define DEV_RANDOM "/dev/urandom"
+
+#endif
+
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
+
+apr_status_t oidc_proto_generate_random_bytes(request_rec *r,
+		unsigned char *buf, apr_size_t length) {
+	apr_status_t rv;
+
+#ifndef USE_URANDOM
+
+	oidc_debug(r, "apr_generate_random_bytes call for %" APR_SIZE_T_FMT " bytes", length);
+	rv = apr_generate_random_bytes(buf, length);
+	oidc_debug(r, "apr_generate_random_bytes returned");
+
+#else
+
+	int fd = -1;
+
+	do {
+		apr_ssize_t rc;
+
+		if (fd == -1) {
+			fd = open(DEV_RANDOM, O_RDONLY);
+			if (fd == -1)
+				return errno;
+		}
+
+		do {
+			oidc_debug(r, "read %s for %" APR_SIZE_T_FMT " bytes", DEV_RANDOM,
+					length);
+			rc = read(fd, buf, length);
+			oidc_debug(r, "read %s returned: %"APR_SIZE_T_FMT, DEV_RANDOM " bytes", rc);
+		} while (rc == -1 && errno == EINTR);
+
+		if (rc < 0) {
+			int errnum = errno;
+			close(fd);
+			return errnum;
+		} else if (rc == 0) {
+			close(fd);
+			fd = -1; /* force open() again */
+		} else {
+			buf += rc;
+			length -= rc;
+		}
+	} while (length > 0);
+
+	close(fd);
+
+	rv = APR_SUCCESS;
+
+#endif
+
+	return rv;
+}
 
 /*
  * generate a random string value value of a specified length
@@ -68,8 +130,8 @@ extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 static apr_byte_t oidc_proto_generate_random_string(request_rec *r,
 		char **output, int len) {
 	unsigned char *bytes = apr_pcalloc(r->pool, len);
-	if (apr_generate_random_bytes(bytes, len) != APR_SUCCESS) {
-		oidc_error(r, "apr_generate_random_bytes returned an error");
+	if (oidc_proto_generate_random_bytes(r, bytes, len) != APR_SUCCESS) {
+		oidc_error(r, "oidc_proto_generate_random_bytes returned an error");
 		return FALSE;
 	}
 	if (oidc_base64url_encode(r, output, (const char *) bytes, len, TRUE)
@@ -553,8 +615,9 @@ void add_auth_request_params(request_rec *r, apr_table_t *params,
 	if (auth_request_params == NULL)
 		return;
 
-	while (*auth_request_params && (val = ap_getword(r->pool, &auth_request_params, OIDC_CHAR_AMP))) {
-		key = ap_getword(r->pool, (const char **)&val, OIDC_CHAR_EQUAL);
+	while (*auth_request_params
+			&& (val = ap_getword(r->pool, &auth_request_params, OIDC_CHAR_AMP))) {
+		key = ap_getword(r->pool, (const char **) &val, OIDC_CHAR_EQUAL);
 		ap_unescape_url(key);
 		ap_unescape_url(val);
 		if (apr_strnatcmp(val, OIDC_STR_HASH) != 0) {
@@ -1634,23 +1697,26 @@ static apr_byte_t oidc_proto_endpoint_auth_none(request_rec *r,
 }
 
 /*
- * setup for an endpoint call with HTTP Basic authentication
+ * setup for an endpoint call with OIDC client_secret_basic authentication
  */
-static apr_byte_t oidc_proto_endpoint_auth_basic(request_rec *r,
+static apr_byte_t oidc_proto_endpoint_client_secret_basic(request_rec *r,
 		const char *client_id, const char *client_secret, char **basic_auth_str) {
 	oidc_debug(r, "enter");
 	if (client_secret == NULL) {
 		oidc_error(r, "no client secret is configured");
 		return FALSE;
 	}
-	*basic_auth_str = apr_psprintf(r->pool, "%s:%s", client_id, client_secret);
+	*basic_auth_str = apr_psprintf(r->pool, "%s:%s",
+			oidc_util_escape_string(r, client_id),
+			oidc_util_escape_string(r, client_secret));
+
 	return TRUE;
 }
 
 /*
- * setup for an endpoint call with authentication in POST parameters
+ * setup for an endpoint call with OIDC client_secret_post authentication
  */
-static apr_byte_t oidc_proto_endpoint_auth_post(request_rec *r,
+static apr_byte_t oidc_proto_endpoint_client_secret_post(request_rec *r,
 		const char *client_id, const char *client_secret, apr_table_t *params) {
 	oidc_debug(r, "enter");
 	if (client_secret == NULL) {
@@ -1835,13 +1901,13 @@ apr_byte_t oidc_proto_token_endpoint_auth(request_rec *r, oidc_cfg *cfg,
 
 	if (apr_strnatcmp(token_endpoint_auth,
 			OIDC_PROTO_CLIENT_SECRET_BASIC) == 0)
-		return oidc_proto_endpoint_auth_basic(r, client_id, client_secret,
-				basic_auth_str);
+		return oidc_proto_endpoint_client_secret_basic(r, client_id,
+				client_secret, basic_auth_str);
 
 	if (apr_strnatcmp(token_endpoint_auth,
 			OIDC_PROTO_CLIENT_SECRET_POST) == 0)
-		return oidc_proto_endpoint_auth_post(r, client_id, client_secret,
-				params);
+		return oidc_proto_endpoint_client_secret_post(r, client_id,
+				client_secret, params);
 
 	if (apr_strnatcmp(token_endpoint_auth,
 			OIDC_PROTO_CLIENT_SECRET_JWT) == 0)
