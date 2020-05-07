@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2019 ZmartZone IAM
+ * Copyright (C) 2017-2020 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -128,9 +128,11 @@ static char *_jwk_parse(apr_pool_t *pool, const char *s, oidc_jwk_t **jwk,
 static char *test_public_key_parse(apr_pool_t *pool) {
 
 	oidc_jose_error_t err;
-	cjose_jwk_t *jwk, *jwkCert = NULL;
+	oidc_jwk_t *jwk, *jwkCert = NULL;
 
 	BIO *input, *inputCert = NULL;
+	char* json = NULL;
+
 	int isPrivateKey = 0;
 	int result;
 
@@ -138,20 +140,40 @@ static char *test_public_key_parse(apr_pool_t *pool) {
 	const char certificateFile[] = "./test/certificate.pem";
 
 	input = BIO_new(BIO_s_file());
-	TST_ASSERT_ERR("test_public_key_parse_BIO_new_public_key", input != NULL, pool, err);
-
-	TST_ASSERT_ERR("test_public_key_parse_BIOread_filename_public_key", result = BIO_read_filename(input, publicKeyFile), pool, err);
-
-	TST_ASSERT_ERR("oidc_jwk_rsa_bio_to_jwk", oidc_jwk_rsa_bio_to_jwk(pool, input, NULL, &jwk, isPrivateKey, &err),
+	TST_ASSERT_ERR("test_public_key_parse_BIO_new_public_key", input != NULL,
 			pool, err);
-	
+
+	TST_ASSERT_ERR("test_public_key_parse_BIOread_filename_public_key",
+			result = BIO_read_filename(input, publicKeyFile), pool, err);
+
+	TST_ASSERT_ERR("oidc_jwk_rsa_bio_to_jwk",
+			oidc_jwk_rsa_bio_to_jwk(pool, input, NULL, &jwk, isPrivateKey, &err),
+			pool, err);
+	BIO_free(input);
+
 	inputCert = BIO_new(BIO_s_file());
-	TST_ASSERT_ERR("test_public_key_parse_BIO_new_certificate", inputCert != NULL, pool, err);	
+	TST_ASSERT_ERR("test_public_key_parse_BIO_new_certificate",
+			inputCert != NULL, pool, err);
 
-	TST_ASSERT_ERR("test_public_key_parse_BIOread_filename_certificate", BIO_read_filename(inputCert, certificateFile), pool, err);	
+	TST_ASSERT_ERR("test_public_key_parse_BIOread_filename_certificate",
+			BIO_read_filename(inputCert, certificateFile), pool, err);
 
-	TST_ASSERT_ERR("oidc_jwk_rsa_bio_to_jwk", oidc_jwk_rsa_bio_to_jwk(pool, inputCert, NULL, &jwkCert, isPrivateKey, &err),
+	TST_ASSERT_ERR("oidc_jwk_rsa_bio_to_jwk",
+			oidc_jwk_rsa_bio_to_jwk(pool, inputCert, NULL, &jwkCert, isPrivateKey, &err),
 			pool, err);
+	BIO_free(inputCert);
+
+	TST_ASSERT_ERR("oidc_jwk_to_json with public key",
+			oidc_jwk_to_json(pool, jwk, &json, &err), pool, err);
+	TST_ASSERT_STR("oidc_jwk_to_json with public key output test", json,
+			"{\"kty\":\"RSA\",\"kid\":\"IbLjLR7-C1q0-ypkueZxGIJwBQNaLg46DZMpnPW1kps\",\"e\":\"AQAB\",\"n\":\"iGeTXbfV5bMppx7o7qMLCuVIKqbBa_qOzBiNNpe0K8rjg7-1z9GCuSlqbZtM0_5BQ6bGonnSPD--PowhFdivS4WNA33O0Kl1tQ0wdH3TOnwueIO9ahfW4q0BGFvMObneK-tjwiNMj1l-cZt8pvuS-3LtTWIzC-hTZM4caUmy5olm5PVdmru6C6V5rxkbYBPITFSzl5mpuo_C6RV_MYRwAh60ghs2OEvIWDrJkZnYaF7sjHC9j-4kfcM5oY7Zhg8KuHyloudYNzlqjVAPd0MbkLkh1pa8fmHsnN6cgfXYtFK7Z8WjYDUAhTH1JjZCVSFN55A-51dgD4cQNzieLEEkJw\"}");
+	oidc_jwk_destroy(jwk);
+
+	TST_ASSERT_ERR("oidc_jwk_to_json with certificate",
+			oidc_jwk_to_json(pool, jwkCert, &json, &err), pool, err);
+	TST_ASSERT_STR("oidc_jwk_to_json with certificate output test", json,
+			"{\"kty\":\"RSA\",\"kid\":\"IbLjLR7-C1q0-ypkueZxGIJwBQNaLg46DZMpnPW1kps\",\"e\":\"AQAB\",\"n\":\"iGeTXbfV5bMppx7o7qMLCuVIKqbBa_qOzBiNNpe0K8rjg7-1z9GCuSlqbZtM0_5BQ6bGonnSPD--PowhFdivS4WNA33O0Kl1tQ0wdH3TOnwueIO9ahfW4q0BGFvMObneK-tjwiNMj1l-cZt8pvuS-3LtTWIzC-hTZM4caUmy5olm5PVdmru6C6V5rxkbYBPITFSzl5mpuo_C6RV_MYRwAh60ghs2OEvIWDrJkZnYaF7sjHC9j-4kfcM5oY7Zhg8KuHyloudYNzlqjVAPd0MbkLkh1pa8fmHsnN6cgfXYtFK7Z8WjYDUAhTH1JjZCVSFN55A-51dgD4cQNzieLEEkJw\",\"x5c\":[\"MIICnTCCAYUCBgFuk1+FLDANBgkqhkiG9w0BAQsFADASMRAwDgYDVQQDDAd2aW5jZW50MB4XDTE5MTEyMjEzNDcyMVoXDTI5MTEyMjEzNDkwMVowEjEQMA4GA1UEAwwHdmluY2VudDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAIhnk1231eWzKace6O6jCwrlSCqmwWv6jswYjTaXtCvK44O/tc/Rgrkpam2bTNP+QUOmxqJ50jw/vj6MIRXYr0uFjQN9ztCpdbUNMHR90zp8LniDvWoX1uKtARhbzDm53ivrY8IjTI9ZfnGbfKb7kvty7U1iMwvoU2TOHGlJsuaJZuT1XZq7ugulea8ZG2ATyExUs5eZqbqPwukVfzGEcAIetIIbNjhLyFg6yZGZ2Ghe7IxwvY/uJH3DOaGO2YYPCrh8paLnWDc5ao1QD3dDG5C5IdaWvH5h7JzenIH12LRSu2fFo2A1AIUx9SY2QlUhTeeQPudXYA+HEDc4nixBJCcCAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAfAo40il4qw7DfOkke0p1ZFAgLQQS3J5hYNDSRvVv+vxkk9o/N++zTMoHbfcDcU5BdVH6Qsr/12PXPX7Ur5WYDq+bWGAK3MAaGtZlmycFeVhoVRfab4TUWUy43H3VyFUNqjGRAVJ/VD1RW3fJ18KrQTN2fcKSd88Jqt5TvjROKghq95+8BQtlhrR/sQVrjgYwc+eU9ljWI56MQXbpHstl9IewMXnusSPxKRTbutjaxzKaoXRTUncPL6ga0SSxOTdKksM4ZYpPnq0B93silb+0qs8aJraGzjAmLE30opfufP+roth19VJxAfYsW5mgAmXP9kEAF+iWB8FB4/Q4noNG8Q==\"],\"x5t#S256\":\"hMVJ55Mqi4uAQIztPKUmL2MSfy6iN1Lr3J1CNGAIBms\",\"x5t\":\"0oN6Bx-eh6VAmNw1I7o3Dd9JPwE\"}");
+	oidc_jwk_destroy(jwkCert);
 
 	return 0;
 }
@@ -1349,6 +1371,8 @@ static char * test_accept(request_rec *r) {
 static char * test_authz_worker(request_rec *r) {
 	authz_status rc;
 	char *require_args = NULL;
+	ap_expr_info_t *parsed_require_args = (ap_expr_info_t *) apr_pcalloc(r->pool,
+		sizeof(ap_expr_info_t));;
 	json_error_t err;
 	json_t *json = NULL;
 	char *claims = NULL;
@@ -1401,47 +1425,58 @@ static char * test_authz_worker(request_rec *r) {
 			json != NULL);
 
 	require_args = "Require claim sub:hans";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (1: simple sub claim)", rc == AUTHZ_DENIED);
 
 	require_args = "Require claim sub:stef";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (2: simple sub claim)", rc == AUTHZ_GRANTED);
 
 	require_args = "Require claim nested.level1.level2:hans";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (3: nested claim)", rc == AUTHZ_GRANTED);
 
 	require_args = "Require claim nested.nestedarray:a";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (4: nested array)", rc == AUTHZ_DENIED);
 
 	require_args = "Require claim nested.nestedarray:c";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (5: nested array)", rc == AUTHZ_GRANTED);
 
 	require_args = "Require claim nested.level1:a";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (6: nested non-string)", rc == AUTHZ_DENIED);
 
 	require_args = "Require claim somebool:a";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (7: non-array)", rc == AUTHZ_DENIED);
 
 	require_args = "Require claim somebool.level1:a";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (8: nested non-array)", rc == AUTHZ_DENIED);
 
 	require_args = "Require claim realm_access.roles:someRole1";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (9: keycloak sample 1)", rc == AUTHZ_GRANTED);
 
 	require_args = "Require claim resource_access.someClient.roles:someRole4";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (10: keycloak sample 2)", rc == AUTHZ_GRANTED);
 
 	require_args = "Require claim https://test.com/pay:alot";
-	rc = oidc_authz_worker24(r, json, require_args, oidc_authz_match_claim);
+	parsed_require_args->filename = require_args;
+	rc = oidc_authz_worker24(r, json, require_args, parsed_require_args, oidc_authz_match_claim);
 	TST_ASSERT("auth status (11: namespaced key)", rc == AUTHZ_GRANTED);
 
 	json_decref(json);

@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2019 ZmartZone IAM
+ * Copyright (C) 2017-2020 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -620,6 +620,23 @@ static const char *oidc_set_session_max_duration(cmd_parms *cmd,
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
+typedef struct oidc_cleanup_keys_ctx {
+	apr_pool_t *pool;
+	apr_hash_t *keys;
+} oidc_cleanup_keys_ctx;
+
+static apr_status_t oidc_cleanup_keys(void *data) {
+	oidc_cleanup_keys_ctx *ctx = (oidc_cleanup_keys_ctx *) data;
+	oidc_jwk_t *jwk = NULL;
+	apr_hash_index_t *hi;
+	for (hi = apr_hash_first(ctx->pool, ctx->keys); hi;
+			hi = apr_hash_next(hi)) {
+		apr_hash_this(hi, NULL, NULL, (void **) &jwk);
+		oidc_jwk_destroy(jwk);
+	}
+	return APR_SUCCESS;
+}
+
 /*
  * add a public key from an X.509 file to our list of JWKs with public keys
  */
@@ -643,15 +660,22 @@ static const char *oidc_set_public_key_files(cmd_parms *cmd, void *struct_ptr,
 
 	fname = oidc_util_get_full_path(cmd->pool, fname);
 
-	if (oidc_jwk_parse_rsa_public_key(cmd->pool, kid, fname, &jwk,
-			&err) == FALSE) {
+	if (oidc_jwk_parse_rsa_public_key(cmd->pool, kid, fname, &jwk, &err)
+			== FALSE) {
 		return apr_psprintf(cmd->pool,
 				"oidc_jwk_parse_rsa_public_key failed for (kid=%s) \"%s\": %s",
 				kid, fname, oidc_jose_e2s(cmd->pool, err));
 	}
 
-	if (*public_keys == NULL)
+	if (*public_keys == NULL) {
 		*public_keys = apr_hash_make(cmd->pool);
+		oidc_cleanup_keys_ctx *ctx = apr_pcalloc(cmd->pool,
+				sizeof(oidc_cleanup_keys_ctx));
+		ctx->pool = cmd->pool;
+		ctx->keys = *public_keys;
+		apr_pool_cleanup_register(cmd->pool, ctx, oidc_cleanup_keys,
+				oidc_cleanup_keys);
+	}
 	apr_hash_set(*public_keys, jwk->kid, APR_HASH_KEY_STRING, jwk);
 
 	return NULL;
@@ -712,16 +736,25 @@ static const char *oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
 
 	fname = oidc_util_get_full_path(cmd->pool, fname);
 
-	if (oidc_jwk_parse_rsa_private_key(cmd->pool, kid, fname, &jwk,
-			&err) == FALSE) {
+	if (oidc_jwk_parse_rsa_private_key(cmd->pool, kid, fname, &jwk, &err)
+			== FALSE) {
 		return apr_psprintf(cmd->pool,
 				"oidc_jwk_parse_rsa_private_key failed for (kid=%s) \"%s\": %s",
 				kid, fname, oidc_jose_e2s(cmd->pool, err));
 	}
 
-	if (cfg->private_keys == NULL)
+	if (cfg->private_keys == NULL) {
 		cfg->private_keys = apr_hash_make(cmd->pool);
+		oidc_cleanup_keys_ctx *ctx = apr_pcalloc(cmd->pool,
+				sizeof(oidc_cleanup_keys_ctx));
+		ctx->pool = cmd->pool;
+		ctx->keys = cfg->private_keys;
+		apr_pool_cleanup_register(cmd->pool, ctx, oidc_cleanup_keys,
+				oidc_cleanup_keys);
+	}
+
 	apr_hash_set(cfg->private_keys, jwk->kid, APR_HASH_KEY_STRING, jwk);
+
 	return NULL;
 }
 
@@ -2334,11 +2367,29 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 	return oidc_config_check_merged_vhost_configs(pool, s);
 }
 
+static const char *oidc_parse_config(cmd_parms *cmd, const char *require_line,
+		const void **parsed_require_line) {
+	const char *expr_err = NULL;
+	ap_expr_info_t *expr;
+
+	expr = ap_expr_parse_cmd(cmd, require_line, AP_EXPR_FLAG_STRING_RESULT,
+		&expr_err, NULL);
+
+	if (expr_err)
+		return apr_pstrcat(cmd->temp_pool,
+			"Cannot parse expression in require line: ",
+			expr_err, NULL);
+
+	*parsed_require_line = expr;
+
+	return NULL;
+}
+
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 static const authz_provider oidc_authz_claim_provider = {
 		&oidc_authz_checker_claim,
-		NULL, };
-
+		&oidc_parse_config,
+};
 #ifdef USE_LIBJQ
 static const authz_provider oidc_authz_claims_expr_provider = {
 		&oidc_authz_checker_claims_expr,

@@ -18,7 +18,7 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2019 ZmartZone IAM
+ * Copyright (C) 2017-2020 ZmartZone IAM
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
  *
@@ -654,6 +654,8 @@ static apr_byte_t oidc_oauth_validate_jwt_access_token(request_rec *r,
 
 	*token = jwt->payload.value.json;
 	*response = jwt->payload.value.str;
+
+	oidc_jwt_destroy(jwt);
 
 	return TRUE;
 }
