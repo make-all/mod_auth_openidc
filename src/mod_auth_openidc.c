@@ -757,7 +757,7 @@ static int oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c,
 							json_int_t ts = oidc_proto_state_get_timestamp(
 									proto_state);
 							if (apr_time_now() > ts + apr_time_from_sec(c->state_timeout)) {
-								oidc_error(r,
+								oidc_warn(r,
 										"state (%s) has expired (original_url=%s)",
 										cookieName,
 										oidc_proto_state_get_original_url(
@@ -3028,6 +3028,9 @@ static int oidc_handle_logout_backchannel(request_rec *r, oidc_cfg *cfg) {
 		oidc_error(r,
 				"could not find session based on sid/sub provided in logout token: %s",
 				sid);
+		// return HTTP 200 according to (new?) spec and terminate early
+		// to avoid Apache returning auth/authz error 500 for the redirect URI
+		rc = DONE;
 		goto out;
 	}
 
@@ -3095,6 +3098,14 @@ static apr_byte_t oidc_validate_post_logout_url(request_rec *r, const char *url,
                 *err_desc =
                                 apr_psprintf(r->pool,
                                                 "No hostname was parsed and starting with '//': %s",
+                                                url);
+                oidc_error(r, "%s: %s", *err_str, *err_desc);
+                return FALSE;
+        } else if ((uri.hostname == NULL) && (strstr(url, "/\\") == url)) {
+                *err_str = apr_pstrdup(r->pool, "Malformed URL");
+                *err_desc =
+                                apr_psprintf(r->pool,
+                                                "No hostname was parsed and starting with '/\\': %s",
                                                 url);
                 oidc_error(r, "%s: %s", *err_str, *err_desc);
                 return FALSE;
