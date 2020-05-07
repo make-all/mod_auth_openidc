@@ -666,7 +666,7 @@ static apr_byte_t oidc_unsolicited_proto_state(request_rec *r, oidc_cfg *c,
 	oidc_jwks_uri_t jwks_uri = { provider->jwks_uri,
 			provider->jwks_refresh_interval, provider->ssl_validate_server };
 	if (oidc_proto_jwt_verify(r, c, jwt, &jwks_uri,
-			oidc_util_merge_symmetric_key(r->pool, NULL, jwk)) == FALSE) {
+			oidc_util_merge_symmetric_key(r->pool, NULL, jwk), NULL) == FALSE) {
 		oidc_error(r, "state JWT could not be validated, aborting");
 		oidc_jwt_destroy(jwt);
 		return FALSE;
@@ -2929,7 +2929,8 @@ static int oidc_handle_logout_backchannel(request_rec *r, oidc_cfg *cfg) {
 	oidc_jwks_uri_t jwks_uri = { provider->jwks_uri,
 			provider->jwks_refresh_interval, provider->ssl_validate_server };
 	if (oidc_proto_jwt_verify(r, cfg, jwt, &jwks_uri,
-			oidc_util_merge_symmetric_key(r->pool, NULL, jwk)) == FALSE) {
+			oidc_util_merge_symmetric_key(r->pool, NULL, jwk),
+			provider->id_token_signed_response_alg) == FALSE) {
 
 		oidc_error(r, "id_token signature could not be validated, aborting");
 		goto out;
@@ -3254,7 +3255,10 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 	const char *java_script =
 			"    <script type=\"text/javascript\">\n"
 			"      var targetOrigin  = '%s';\n"
-			"      var message = '%s' + ' ' + '%s';\n"
+			"      var clientId  = '%s';\n"
+			"      var sessionId  = '%s';\n"
+			"      var loginUrl  = '%s';\n"
+			"      var message = clientId + ' ' + sessionId;\n"
 			"	   var timerID;\n"
 			"\n"
 			"      function checkSession() {\n"
@@ -3276,10 +3280,14 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 			"        }\n"
 			"        if (e.data != 'unchanged') {\n"
 			"          clearInterval(timerID);\n"
-			"          if (e.data == 'changed') {\n"
-			"		     window.location.href = '%s?session=check';\n"
-			"          } else {\n"
-			"		     window.location.href = '%s?session=logout';\n"
+			"          if (e.data == 'changed' && sessionId == '' ) {\n"
+			"			 // 'changed' + no session: enforce a login (if we have a login url...)\n"
+			"            if (loginUrl != '') {\n"
+			"              window.top.location.replace(loginUrl);\n"
+			"            }\n"
+			"		   } else {\n"
+			"              // either 'changed' + active session, or 'error': enforce a logout\n"
+			"              window.top.location.replace('%s?logout=' + window.top.location.href);\n"
 			"          }\n"
 			"        }\n"
 			"      }\n"
@@ -3303,7 +3311,7 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 	if (session_state == NULL) {
 		oidc_warn(r,
 				"no session_state found in the session; the OP does probably not support session management!?");
-		return OK;
+		//return OK;
 	}
 
 	char *s_poll_interval = NULL;
@@ -3312,10 +3320,14 @@ static int oidc_handle_session_management_iframe_rp(request_rec *r, oidc_cfg *c,
 	if ((poll_interval <= 0) || (poll_interval > 3600 * 24))
 		poll_interval = 3000;
 
+	char *login_uri = NULL;
+	oidc_util_get_request_parameter(r, "login_uri", &login_uri);
+
 	const char *redirect_uri = oidc_get_redirect_uri(r, c);
+
 	java_script = apr_psprintf(r->pool, java_script, origin, client_id,
-			session_state, op_iframe_id, poll_interval, redirect_uri,
-			redirect_uri);
+			session_state ? session_state : "", login_uri ? login_uri : "",
+					op_iframe_id, poll_interval, redirect_uri, redirect_uri);
 
 	return oidc_util_html_send(r, NULL, java_script, "setTimer", NULL, OK);
 }
@@ -3343,7 +3355,11 @@ static int oidc_handle_session_management(request_rec *r, oidc_cfg *c,
 		return oidc_handle_logout_request(r, c, session, c->default_slo_url);
 	}
 
-	oidc_get_provider_from_session(r, c, session, &provider);
+	if (oidc_get_provider_from_session(r, c, session, &provider) == FALSE) {
+		if ((oidc_provider_static_config(r, c, &provider) == FALSE)
+				|| (provider == NULL))
+			return HTTP_NOT_FOUND;
+	}
 
 	/* see if this is a request for the OP iframe */
 	if (apr_strnatcmp("iframe_op", cmd) == 0) {
@@ -3370,23 +3386,17 @@ static int oidc_handle_session_management(request_rec *r, oidc_cfg *c,
 	/* see if this is a request check the login state with the OP */
 	if (apr_strnatcmp("check", cmd) == 0) {
 		id_token_hint = oidc_session_get_idtoken(r, session);
-		if ((session->remote_user != NULL) && (provider != NULL)) {
-			/*
-			 * TODO: this doesn't work with per-path provided auth_request_params and scopes
-			 *       as oidc_dir_cfg_path_auth_request_params and oidc_dir_cfg_path_scope will pick
-			 *       those for the redirect_uri itself; do we need to store those as part of the
-			 *       session now?
-			 */
-			return oidc_authenticate_user(r, c, provider,
-					apr_psprintf(r->pool, "%s?session=iframe_rp",
-							oidc_get_redirect_uri_iss(r, c, provider)), NULL,
-							id_token_hint, "none",
-							oidc_dir_cfg_path_auth_request_params(r),
-							oidc_dir_cfg_path_scope(r));
-		}
-		oidc_debug(r,
-				"[session=check] calling oidc_handle_logout_request because no session found.");
-		return oidc_session_redirect_parent_window_to_logout(r, c);
+		/*
+		 * TODO: this doesn't work with per-path provided auth_request_params and scopes
+		 *       as oidc_dir_cfg_path_auth_request_params and oidc_dir_cfg_path_scope will pick
+		 *       those for the redirect_uri itself; do we need to store those as part of the
+		 *       session now?
+		 */
+		return oidc_authenticate_user(r, c, provider,
+				apr_psprintf(r->pool, "%s?session=iframe_rp",
+						oidc_get_redirect_uri_iss(r, c, provider)), NULL,
+						id_token_hint, "none", oidc_dir_cfg_path_auth_request_params(r),
+						oidc_dir_cfg_path_scope(r));
 	}
 
 	/* handle failure in fallthrough */
