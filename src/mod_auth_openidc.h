@@ -164,9 +164,6 @@ APLOG_USE_MODULE(auth_openidc);
 #define OIDC_AUTH_REQUEST_METHOD_GET  0
 #define OIDC_AUTH_REQUEST_METHOD_POST 1
 
-/* prefix of the cookie that binds the state in the authorization request/response to the browser */
-#define OIDC_STATE_COOKIE_PREFIX  "mod_auth_openidc_state_"
-
 /* default prefix for information passed in HTTP headers */
 #define OIDC_DEFAULT_HEADER_PREFIX "OIDC_"
 
@@ -716,6 +713,7 @@ int oidc_cfg_dir_preserve_post(request_rec *r);
 apr_array_header_t *oidc_dir_cfg_pass_cookies(request_rec *r);
 apr_array_header_t *oidc_dir_cfg_strip_cookies(request_rec *r);
 int oidc_dir_cfg_unauth_action(request_rec *r);
+apr_byte_t oidc_dir_cfg_unauth_expr_is_set(request_rec *r);
 int oidc_dir_cfg_unautz_action(request_rec *r);
 char *oidc_dir_cfg_path_auth_request_params(request_rec *r);
 char *oidc_dir_cfg_path_scope(request_rec *r);
@@ -727,6 +725,7 @@ const char *oidc_cfg_claim_prefix(request_rec *r);
 int oidc_cfg_max_number_of_state_cookies(oidc_cfg *cfg);
 int oidc_cfg_dir_refresh_access_token_before_expiry(request_rec *r);
 int oidc_cfg_dir_logout_on_error_refresh(request_rec *r);
+char *oidc_cfg_dir_state_cookie_prefix(request_rec *r);
 int oidc_cfg_delete_oldest_state_cookies(oidc_cfg *cfg);
 void oidc_cfg_provider_init(oidc_provider_t *provider);
 
