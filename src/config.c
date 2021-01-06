@@ -278,6 +278,7 @@
 #define OIDCStateInputHeaders                  "OIDCStateInputHeaders"
 #define OIDCRedirectURLsAllowed                "OIDCRedirectURLsAllowed"
 #define OIDCStateCookiePrefix                  "OIDCStateCookiePrefix"
+#define OIDCCABundlePath                       "OIDCCABundlePath"
 
 extern module AP_MODULE_DECLARE_DATA auth_openidc_module;
 
@@ -290,7 +291,9 @@ typedef struct oidc_dir_cfg {
 	char *cookie;
 	char *authn_header;
 	int unauth_action;
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	ap_expr_info_t *unauth_expression;
+#endif
 	int unautz_action;
 	apr_array_header_t *pass_cookies;
 	apr_array_header_t *strip_cookies;
@@ -373,12 +376,10 @@ static const char *oidc_set_url_slot(cmd_parms *cmd, void *ptr, const char *arg)
 }
 
 /*
- * set a relative or absolute URL value in the server config
+ * set a relative or absolute URL value in a config rec
  */
-static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
-		void *ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+static const char *oidc_set_relative_or_absolute_url_slot_dir_cfg(
+		cmd_parms *cmd, void *ptr, const char *arg) {
 	if (arg[0] == OIDC_CHAR_FORWARD_SLASH) {
 		// relative uri
 		apr_uri_t uri;
@@ -387,20 +388,22 @@ static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
 					"cannot parse '%s' as relative URI", arg);
 			return OIDC_CONFIG_DIR_RV(cmd, rv);
 		} else {
-			return ap_set_string_slot(cmd, cfg, arg);
+			return ap_set_string_slot(cmd, ptr, arg);
 		}
 	} else {
 		// absolute uri
-		return oidc_set_url_slot_type(cmd, cfg, arg, NULL);
+		return oidc_set_url_slot_type(cmd, ptr, arg, NULL);
 	}
 }
 
 /*
- * set a HTTPS/HTTP value in the directory config
+ * set a relative or absolute URL value in the server config
  */
-static const char *oidc_set_url_slot_dir_cfg(cmd_parms *cmd, void *ptr,
-		const char *arg) {
-	return oidc_set_url_slot_type(cmd, ptr, arg, NULL);
+static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
+		void *ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+	return oidc_set_relative_or_absolute_url_slot_dir_cfg(cmd, cfg, arg);
 }
 
 /*
@@ -414,6 +417,55 @@ static const char *oidc_set_dir_slot(cmd_parms *cmd, void *ptr, const char *arg)
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
 	return rv;
+}
+
+/*
+ * set a path value in the server config, converting to absolute if necessary
+ */
+static const char *oidc_set_path_slot(cmd_parms *cmd, void *ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+	const char *full_path = oidc_util_get_full_path(cmd->pool, arg);
+	return ap_set_string_slot(cmd, cfg, full_path);
+}
+
+/*
+ * set a string value in the server config with exec support
+ */
+static const char *oidc_set_passphrase_slot(cmd_parms *cmd, void *struct_ptr,
+		const char *arg) {
+	int arglen = strlen(arg);
+	char **argv;
+	char *result;
+	const char *passphrase;
+	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
+			cmd->server->module_config, &auth_openidc_module);
+
+	/* Based on code from mod_session_crypto. */
+	if (arglen > 5 && strncmp(arg, "exec:", 5) == 0) {
+		if (apr_tokenize_to_argv(arg + 5, &argv, cmd->temp_pool) != APR_SUCCESS) {
+			return apr_pstrcat(cmd->pool,
+				"Unable to parse exec arguments from ", arg + 5, NULL);
+		}
+		argv[0] = ap_server_root_relative(cmd->temp_pool, argv[0]);
+
+		if (!argv[0]) {
+			return apr_pstrcat(cmd->pool,
+				"Invalid ", cmd->cmd->name, " exec location:", arg + 5, NULL);
+		}
+		result = ap_get_exec_line(cmd->pool, argv[0], (const char * const *)argv);
+
+		if (!result) {
+			return apr_pstrcat(cmd->pool,
+				"Unable to get passphrase from exec of ", arg + 5, NULL);
+		}
+
+		passphrase = result;
+	} else {
+		passphrase = arg;
+	}
+
+	return ap_set_string_slot(cmd, cfg, passphrase);
 }
 
 /*
@@ -928,9 +980,10 @@ static const char * oidc_set_pass_claims_as(cmd_parms *cmd, void *m,
 static const char * oidc_set_unauth_action(cmd_parms *cmd, void *m,
 		const char *arg1, const char *arg2) {
 	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
-	const char *expr_err = NULL;
 	const char *rv = oidc_parse_unauth_action(cmd->pool, arg1,
 			&dir_cfg->unauth_action);
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+	const char *expr_err = NULL;
 	if ((rv == NULL) && (arg2 != NULL)) {
 		dir_cfg->unauth_expression = ap_expr_parse_cmd(cmd, arg2,
 				AP_EXPR_FLAG_DONT_VARY & AP_EXPR_FLAG_RESTRICTED, &expr_err,
@@ -940,6 +993,7 @@ static const char * oidc_set_unauth_action(cmd_parms *cmd, void *m,
 					expr_err, NULL);
 		}
 	}
+#endif
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
@@ -1344,6 +1398,8 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->state_input_headers = OIDC_DEFAULT_STATE_INPUT_HEADERS;
 
 	c->redirect_urls_allowed = NULL;
+
+	c->ca_bundle_path = NULL;
 
 	return c;
 }
@@ -1826,6 +1882,10 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 			add->redirect_urls_allowed != NULL ?
 					add->redirect_urls_allowed : base->redirect_urls_allowed;
 
+	c->ca_bundle_path =
+			add->ca_bundle_path != NULL ?
+					add->ca_bundle_path : base->ca_bundle_path;
+
 	return c;
 }
 
@@ -1855,7 +1915,9 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->cookie_path = OIDC_CONFIG_STRING_UNSET;
 	c->authn_header = OIDC_CONFIG_STRING_UNSET;
 	c->unauth_action = OIDC_CONFIG_POS_INT_UNSET;
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	c->unauth_expression = NULL;
+#endif
 	c->unautz_action = OIDC_CONFIG_POS_INT_UNSET;
 	c->pass_cookies = NULL;
 	c->strip_cookies = NULL;
@@ -1863,7 +1925,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->pass_info_in_env_vars = OIDC_CONFIG_POS_INT_UNSET;
 	c->oauth_accept_token_in = OIDC_CONFIG_POS_INT_UNSET;
 	c->oauth_accept_token_options = apr_hash_make(pool);
-	c->oauth_token_introspect_interval = OIDC_CONFIG_POS_INT_UNSET;
+	c->oauth_token_introspect_interval = -2;
 	c->preserve_post = OIDC_CONFIG_POS_INT_UNSET;
 	c->pass_refresh_token = OIDC_CONFIG_POS_INT_UNSET;
 	c->path_auth_request_params = NULL;
@@ -1958,7 +2020,7 @@ char *oidc_cfg_dir_accept_token_in_option(request_rec *r, const char *key) {
 int oidc_cfg_token_introspection_interval(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
-	if (dir_cfg->oauth_token_introspect_interval == OIDC_CONFIG_POS_INT_UNSET)
+	if (dir_cfg->oauth_token_introspect_interval <= -2)
 		return OIDC_DEFAULT_TOKEN_INTROSPECTION_INTERVAL;
 	return dir_cfg->oauth_token_introspect_interval;
 }
@@ -1987,11 +2049,12 @@ int oidc_dir_cfg_unauth_action(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 
-	int rc = 0;
-	const char *err_str = NULL;
 	if (dir_cfg->unauth_action == OIDC_CONFIG_POS_INT_UNSET)
 		return OIDC_DEFAULT_UNAUTH_ACTION;
 
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+	int rc = 0;
+	const char *err_str = NULL;
 	if (dir_cfg->unauth_expression == NULL)
 		return dir_cfg->unauth_action;
 
@@ -2003,12 +2066,19 @@ int oidc_dir_cfg_unauth_action(request_rec *r) {
 	}
 
 	return (rc > 0) ? dir_cfg->unauth_action : OIDC_DEFAULT_UNAUTH_ACTION;
+#else
+	return dir_cfg->unauth_action;
+#endif
 }
 
 apr_byte_t oidc_dir_cfg_unauth_expr_is_set(request_rec *r) {
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return (dir_cfg->unauth_expression != NULL) ? TRUE : FALSE;
+#else
+	return FALSE;
+#endif
 }
 
 int oidc_dir_cfg_unautz_action(request_rec *r) {
@@ -2053,9 +2123,11 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->unauth_action =
 			add->unauth_action != OIDC_CONFIG_POS_INT_UNSET ?
 					add->unauth_action : base->unauth_action;
+#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	c->unauth_expression =
 			add->unauth_expression != NULL ?
 					add->unauth_expression : base->unauth_expression;
+#endif
 	c->unautz_action =
 			add->unautz_action != OIDC_CONFIG_POS_INT_UNSET ?
 					add->unautz_action : base->unautz_action;
@@ -2080,7 +2152,7 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 					add->oauth_accept_token_options :
 					base->oauth_accept_token_options;
 	c->oauth_token_introspect_interval =
-			add->oauth_token_introspect_interval != OIDC_CONFIG_POS_INT_UNSET ?
+			add->oauth_token_introspect_interval >= -1 ?
 					add->oauth_token_introspect_interval :
 					base->oauth_token_introspect_interval;
 	c->preserve_post =
@@ -2233,6 +2305,9 @@ static int oidc_check_config_oauth(server_rec *s, oidc_cfg *c) {
 		return HTTP_INTERNAL_SERVER_ERROR;
 
 	}
+
+	if ((c->cache_encrypt == 1) && (c->crypto_passphrase == NULL))
+		return oidc_check_config_error(s, OIDCCryptoPassphrase);
 
 	return OK;
 }
@@ -2626,7 +2701,7 @@ static apr_status_t oidc_filter_in_filter(ap_filter_t *f,
 void oidc_register_hooks(apr_pool_t *pool) {
 	ap_hook_post_config(oidc_post_config, NULL, NULL, APR_HOOK_LAST);
 	ap_hook_child_init(oidc_child_init, NULL, NULL, APR_HOOK_MIDDLE);
-	ap_hook_handler(oidc_content_handler, NULL, NULL, APR_HOOK_MIDDLE);
+	ap_hook_handler(oidc_content_handler, NULL, NULL, APR_HOOK_FIRST);
 	ap_hook_insert_filter(oidc_filter_in_insert_filter, NULL, NULL,
 			APR_HOOK_MIDDLE);
 	ap_register_input_filter(oidcFilterName, oidc_filter_in_filter, NULL,
@@ -2906,7 +2981,7 @@ const command_rec oidc_config_cmds[] = {
 				RSRC_CONF,
 				"Specify an outgoing proxy for your network (<host>[:<port>]."),
 		AP_INIT_TAKE1(OIDCCryptoPassphrase,
-				oidc_set_string_slot,
+				oidc_set_passphrase_slot,
 				(void*)APR_OFFSETOF(oidc_cfg, crypto_passphrase),
 				RSRC_CONF,
 				"Passphrase used for AES crypto on cookies and state."),
@@ -3122,7 +3197,7 @@ const command_rec oidc_config_cmds[] = {
 				"Name of a HTML error template: needs to contain two \"%s\" characters, one for the error message, one for the description."),
 
 		AP_INIT_TAKE1(OIDCDiscoverURL,
-				oidc_set_url_slot_dir_cfg,
+				oidc_set_relative_or_absolute_url_slot_dir_cfg,
 				(void *)APR_OFFSETOF(oidc_dir_cfg, discover_url),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Defines an external IDP Discovery page"),
@@ -3262,6 +3337,12 @@ const command_rec oidc_config_cmds[] = {
 				(void *) APR_OFFSETOF(oidc_dir_cfg, state_cookie_prefix),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Define the cookie prefix for the state cookie."),
+
+		AP_INIT_TAKE1(OIDCCABundlePath,
+				oidc_set_path_slot,
+				(void *) APR_OFFSETOF(oidc_cfg, ca_bundle_path),
+				RSRC_CONF,
+				"Sets the path to the CA bundle to be used by cURL."),
 
 		{ NULL }
 };

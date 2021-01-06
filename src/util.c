@@ -680,6 +680,8 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	CURL *curl;
 	struct curl_slist *h_list = NULL;
 	int i;
+	oidc_cfg *c = ap_get_module_config(r->server->module_config,
+			&auth_openidc_module);
 
 	/* do some logging about the inputs */
 	oidc_debug(r,
@@ -727,17 +729,22 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,
 			(ssl_validate_server != FALSE ? 2L : 0L));
 
+	if (c->ca_bundle_path != NULL) {
+		curl_easy_setopt(curl, CURLOPT_CAINFO, c->ca_bundle_path);
+	}
 #ifdef WIN32
-	DWORD buflen;
-	char *ptr = NULL;
-	char *retval = (char *) malloc(sizeof (TCHAR) * (MAX_PATH + 1));
-	retval[0] = '\0';
-	buflen = SearchPath(NULL, "curl-ca-bundle.crt", NULL, MAX_PATH+1, retval, &ptr);
-	if (buflen > 0)
-		curl_easy_setopt(curl, CURLOPT_CAINFO, retval);
-	else
-		oidc_warn(r, "no curl-ca-bundle.crt file found in path");
-	free(retval);
+	else {
+		DWORD buflen;
+		char *ptr = NULL;
+		char *retval = (char *) malloc(sizeof (TCHAR) * (MAX_PATH + 1));
+		retval[0] = '\0';
+		buflen = SearchPath(NULL, "curl-ca-bundle.crt", NULL, MAX_PATH+1, retval, &ptr);
+		if (buflen > 0)
+			curl_easy_setopt(curl, CURLOPT_CAINFO, retval);
+		else
+			oidc_warn(r, "no curl-ca-bundle.crt file found in path");
+		free(retval);
+	}
 #endif
 
 	/* identify this HTTP client */
@@ -1290,6 +1297,8 @@ static apr_byte_t oidc_util_check_json_error(request_rec *r, json_t *json) {
 	return FALSE;
 }
 
+#define OIDC_JSON_MAX_ERROR_STR 4096
+
 /*
  * parse a JSON object
  */
@@ -1305,8 +1314,18 @@ apr_byte_t oidc_util_decode_json_object(request_rec *r, const char *str,
 	/* decode the JSON contents of the buffer */
 	if (*json == NULL) {
 		/* something went wrong */
-		oidc_error(r, "JSON parsing returned an error: %s (%s)",
-				json_error.text, str);
+#if JANSSON_VERSION_HEX >= 0x020B00
+		if (json_error_code(&json_error) == json_error_null_character) {
+			oidc_error(r, "JSON parsing returned an error: %s",
+					json_error.text);
+		} else {
+#endif
+			oidc_error(r, "JSON parsing returned an error: %s (%s)",
+					json_error.text,
+					apr_pstrndup(r->pool, str, OIDC_JSON_MAX_ERROR_STR));
+#if JANSSON_VERSION_HEX >= 0x020B00
+		}
+#endif
 		return FALSE;
 	}
 

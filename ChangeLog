@@ -1,3 +1,56 @@
+11/23/2020
+- release 2.4.5
+
+11/19/2020
+- ensure that "sub" is returned from the userinfo endpoint following https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse
+  prevents potential ID spoofing; thanks Christian Fries of Ruhr-University Bochum
+- don't printout JSON errors about NULL characters in error log; thanks Christian Fries of Ruhr-University Bochum
+- restrict printout of JSON parsing errors to 4096 bytes; thanks Christian Fries of Ruhr-University Bochum
+- bump to 2.4.5rc6
+
+11/5/2020
+- fix content processing for info and JWKs handler so mod_headers etc. works; closes #497
+- bump to 2.4.5rc5
+
+11/2/2020
+- improve sanity checking on Redis reply
+- bump to 2.4.5rc4
+
+10/30/2020
+- disable caching token introspection results by setting OIDCOAuthTokenIntrospectionInterval to -1; thanks @wadahiro
+- bump to 2.4.5rc3
+
+10/27/2020
+- config check on OIDCCryptoPassphrase in OAuth 2.0 RS setup with cache encryption enabled
+- bump to 2.4.5rc2
+
+10/22/2020
+- hash define expression option to OIDCUnAuthAction so it compiles for Apache 2.2; fixes 1461634
+- bump to 2.4.5rc1
+- add exec support to OIDCCryptoPassphrase
+ 
+10/19/2020
+- delete stale session cookies that aren't in the cache
+- allow OIDCDiscoverURL to be a relative URL
+
+10/08/2020
+- add OIDCCABundlePath for configuring path to curl CA bundle
+
+09/22/2020
+- avoid Apache 2.4 appending 401 HTML document text to step-up authentication HTML refresh page; closes #484
+- bump to 2.4.5rc0
+
+09/21/2020
+- populate AUTH_TYPE when performing authentication; thanks @spanglerco
+
+09/19/2020
+- enable authentication of sub-requests when the main request doesn't require
+  authentication; thanks @spanglerco
+
+09/03/2020
+- add SameSite attribute on cookie clearance / logout; thanks @v0gler
+- bump to 2.4.4.1
+
 09/01/2020
 - avoid GCC 9 compiler warnings
 - release 2.4.4
