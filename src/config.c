@@ -227,52 +227,53 @@
 #define OIDCOAuthClientID                      "OIDCOAuthClientID"
 #define OIDCOAuthClientSecret                  "OIDCOAuthClientSecret"
 #define OIDCOAuthIntrospectionClientAuthBearerToken "OIDCOAuthIntrospectionClientAuthBearerToken"
-#define OIDCOAuthIntrospectionEndpoint       "OIDCOAuthIntrospectionEndpoint"
-#define OIDCOAuthIntrospectionEndpointMethod "OIDCOAuthIntrospectionEndpointMethod"
-#define OIDCOAuthIntrospectionEndpointParams "OIDCOAuthIntrospectionEndpointParams"
-#define OIDCOAuthIntrospectionEndpointAuth   "OIDCOAuthIntrospectionEndpointAuth"
-#define OIDCOAuthIntrospectionEndpointCert   "OIDCOAuthIntrospectionEndpointCert"
-#define OIDCOAuthIntrospectionEndpointKey    "OIDCOAuthIntrospectionEndpointKey"
-#define OIDCOAuthIntrospectionTokenParamName "OIDCOAuthIntrospectionTokenParamName"
-#define OIDCOAuthTokenExpiryClaim            "OIDCOAuthTokenExpiryClaim"
-#define OIDCOAuthSSLValidateServer           "OIDCOAuthSSLValidateServer"
-#define OIDCOAuthVerifyCertFiles             "OIDCOAuthVerifyCertFiles"
-#define OIDCOAuthVerifySharedKeys            "OIDCOAuthVerifySharedKeys"
-#define OIDCOAuthVerifyJwksUri               "OIDCOAuthVerifyJwksUri"
-#define OIDCHTTPTimeoutLong                  "OIDCHTTPTimeoutLong"
-#define OIDCHTTPTimeoutShort                 "OIDCHTTPTimeoutShort"
-#define OIDCStateTimeout                     "OIDCStateTimeout"
-#define OIDCStateMaxNumberOfCookies          "OIDCStateMaxNumberOfCookies"
-#define OIDCSessionInactivityTimeout         "OIDCSessionInactivityTimeout"
-#define OIDCMetadataDir                      "OIDCMetadataDir"
-#define OIDCSessionCacheFallbackToCookie     "OIDCSessionCacheFallbackToCookie"
-#define OIDCSessionCookieChunkSize           "OIDCSessionCookieChunkSize"
-#define OIDCScrubRequestHeaders              "OIDCScrubRequestHeaders"
-#define OIDCCacheType                        "OIDCCacheType"
-#define OIDCCacheEncrypt                     "OIDCCacheEncrypt"
-#define OIDCCacheDir                         "OIDCCacheDir"
-#define OIDCCacheFileCleanInterval           "OIDCCacheFileCleanInterval"
-#define OIDCRedisCachePassword               "OIDCRedisCachePassword"
-#define OIDCHTMLErrorTemplate                "OIDCHTMLErrorTemplate"
-#define OIDCDiscoverURL                      "OIDCDiscoverURL"
-#define OIDCPassCookies                      "OIDCPassCookies"
-#define OIDCStripCookies                     "OIDCStripCookies"
-#define OIDCAuthNHeader                      "OIDCAuthNHeader"
-#define OIDCCookie                           "OIDCCookie"
-#define OIDCUnAuthAction                     "OIDCUnAuthAction"
-#define OIDCUnAutzAction                     "OIDCUnAutzAction"
-#define OIDCPassClaimsAs                     "OIDCPassClaimsAs"
-#define OIDCOAuthAcceptTokenAs               "OIDCOAuthAcceptTokenAs"
-#define OIDCUserInfoRefreshInterval          "OIDCUserInfoRefreshInterval"
-#define OIDCOAuthTokenIntrospectionInterval  "OIDCOAuthTokenIntrospectionInterval"
-#define OIDCPreservePost                     "OIDCPreservePost"
-#define OIDCPassRefreshToken                 "OIDCPassRefreshToken"
-#define OIDCRequestObject                    "OIDCRequestObject"
-#define OIDCProviderMetadataRefreshInterval  "OIDCProviderMetadataRefreshInterval"
-#define OIDCProviderUserInfoResponseSubkey   "OIDCProviderUserInfoResponseSubkey"
-#define OIDCProviderAuthRequestMethod        "OIDCProviderAuthRequestMethod"
-#define OIDCBlackListedClaims                "OIDCBlackListedClaims"
-#define OIDCOAuthServerMetadataURL           "OIDCOAuthServerMetadataURL"
+#define OIDCOAuthIntrospectionEndpoint         "OIDCOAuthIntrospectionEndpoint"
+#define OIDCOAuthIntrospectionEndpointMethod   "OIDCOAuthIntrospectionEndpointMethod"
+#define OIDCOAuthIntrospectionEndpointParams   "OIDCOAuthIntrospectionEndpointParams"
+#define OIDCOAuthIntrospectionEndpointAuth     "OIDCOAuthIntrospectionEndpointAuth"
+#define OIDCOAuthIntrospectionEndpointCert     "OIDCOAuthIntrospectionEndpointCert"
+#define OIDCOAuthIntrospectionEndpointKey      "OIDCOAuthIntrospectionEndpointKey"
+#define OIDCOAuthIntrospectionTokenParamName   "OIDCOAuthIntrospectionTokenParamName"
+#define OIDCOAuthTokenExpiryClaim              "OIDCOAuthTokenExpiryClaim"
+#define OIDCOAuthSSLValidateServer             "OIDCOAuthSSLValidateServer"
+#define OIDCOAuthVerifyCertFiles               "OIDCOAuthVerifyCertFiles"
+#define OIDCOAuthVerifySharedKeys              "OIDCOAuthVerifySharedKeys"
+#define OIDCOAuthVerifyJwksUri                 "OIDCOAuthVerifyJwksUri"
+#define OIDCHTTPTimeoutLong                    "OIDCHTTPTimeoutLong"
+#define OIDCHTTPTimeoutShort                   "OIDCHTTPTimeoutShort"
+#define OIDCStateTimeout                       "OIDCStateTimeout"
+#define OIDCStateMaxNumberOfCookies            "OIDCStateMaxNumberOfCookies"
+#define OIDCSessionInactivityTimeout           "OIDCSessionInactivityTimeout"
+#define OIDCMetadataDir                        "OIDCMetadataDir"
+#define OIDCSessionCacheFallbackToCookie       "OIDCSessionCacheFallbackToCookie"
+#define OIDCSessionCookieChunkSize             "OIDCSessionCookieChunkSize"
+#define OIDCScrubRequestHeaders                "OIDCScrubRequestHeaders"
+#define OIDCCacheType                          "OIDCCacheType"
+#define OIDCCacheEncrypt                       "OIDCCacheEncrypt"
+#define OIDCCacheDir                           "OIDCCacheDir"
+#define OIDCCacheFileCleanInterval             "OIDCCacheFileCleanInterval"
+#define OIDCRedisCachePassword                 "OIDCRedisCachePassword"
+#define OIDCRedisCacheDatabase                 "OIDCRedisCacheDatabase"
+#define OIDCHTMLErrorTemplate                  "OIDCHTMLErrorTemplate"
+#define OIDCDiscoverURL                        "OIDCDiscoverURL"
+#define OIDCPassCookies                        "OIDCPassCookies"
+#define OIDCStripCookies                       "OIDCStripCookies"
+#define OIDCAuthNHeader                        "OIDCAuthNHeader"
+#define OIDCCookie                             "OIDCCookie"
+#define OIDCUnAuthAction                       "OIDCUnAuthAction"
+#define OIDCUnAutzAction                       "OIDCUnAutzAction"
+#define OIDCPassClaimsAs                       "OIDCPassClaimsAs"
+#define OIDCOAuthAcceptTokenAs                 "OIDCOAuthAcceptTokenAs"
+#define OIDCUserInfoRefreshInterval            "OIDCUserInfoRefreshInterval"
+#define OIDCOAuthTokenIntrospectionInterval    "OIDCOAuthTokenIntrospectionInterval"
+#define OIDCPreservePost                       "OIDCPreservePost"
+#define OIDCPassRefreshToken                   "OIDCPassRefreshToken"
+#define OIDCRequestObject                      "OIDCRequestObject"
+#define OIDCProviderMetadataRefreshInterval    "OIDCProviderMetadataRefreshInterval"
+#define OIDCProviderUserInfoResponseSubkey     "OIDCProviderUserInfoResponseSubkey"
+#define OIDCProviderAuthRequestMethod          "OIDCProviderAuthRequestMethod"
+#define OIDCBlackListedClaims                  "OIDCBlackListedClaims"
+#define OIDCOAuthServerMetadataURL             "OIDCOAuthServerMetadataURL"
 #define OIDCOAuthAccessTokenBindingPolicy      "OIDCOAuthAccessTokenBindingPolicy"
 #define OIDCRefreshAccessTokenBeforeExpiry     "OIDCRefreshAccessTokenBeforeExpiry"
 #define OIDCStateInputHeaders                  "OIDCStateInputHeaders"
@@ -1350,6 +1351,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 #ifdef USE_LIBHIREDIS
 	c->cache_redis_server = NULL;
 	c->cache_redis_password = NULL;
+	c->cache_redis_database = -1;
 #endif
 
 	c->metadata_dir = NULL;
@@ -1773,6 +1775,9 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->cache_redis_password =
 			add->cache_redis_password != NULL ?
 					add->cache_redis_password : base->cache_redis_password;
+	c->cache_redis_database =
+			add->cache_redis_database != -1 ?
+					add->cache_redis_database : base->cache_redis_database;
 #endif
 
 	c->metadata_dir =
@@ -3193,6 +3198,11 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_cfg, cache_redis_password),
 				RSRC_CONF,
 				"Password for authentication to the Redis servers."),
+		AP_INIT_TAKE1(OIDCRedisCacheDatabase,
+				oidc_set_int_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, cache_redis_database),
+				RSRC_CONF,
+				"Database for the Redis servers."),
 #endif
 		AP_INIT_TAKE1(OIDCHTMLErrorTemplate,
 				oidc_set_string_slot,
