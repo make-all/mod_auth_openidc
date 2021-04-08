@@ -18,17 +18,9 @@
  */
 
 /***************************************************************************
- * Copyright (C) 2017-2020 ZmartZone IAM
+ * Copyright (C) 2017-2021 ZmartZone Holding BV
  * Copyright (C) 2013-2017 Ping Identity Corporation
  * All rights reserved.
- *
- * For further information please contact:
- *
- *      Ping Identity Corporation
- *      1099 18th St Suite 2950
- *      Denver, CO 80202
- *      303.468.2900
- *      http://www.pingidentity.com
  *
  * DISCLAIMER OF WARRANTIES:
  *
@@ -152,6 +144,8 @@
 #define OIDC_DEFAULT_PASS_APP_INFO_IN_HEADERS 1
 /* default for passing app info in environment variables */
 #define OIDC_DEFAULT_PASS_APP_INFO_IN_ENVVARS 1
+/* default for passing app info in base64 encoded format */
+#define OIDC_DEFAULT_PASS_APP_INFO_BASE64URL 0
 /* default value for the token introspection interval (0 = disabled, no expiry of claims) */
 #define OIDC_DEFAULT_TOKEN_INTROSPECTION_INTERVAL 0
 /* default action to take on an incoming unauthenticated request */
@@ -300,6 +294,7 @@ typedef struct oidc_dir_cfg {
 	apr_array_header_t *strip_cookies;
 	int pass_info_in_headers;
 	int pass_info_in_env_vars;
+	int pass_info_base64url;
 	int oauth_accept_token_in;
 	apr_hash_t *oauth_accept_token_options;
 	int oauth_token_introspect_interval;
@@ -317,36 +312,36 @@ typedef struct oidc_dir_cfg {
 /*
  * set a boolean value in the server config
  */
-static const char *oidc_set_flag_slot(cmd_parms *cmd, void *struct_ptr, int arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+static const char* oidc_set_flag_slot(cmd_parms *cmd, void *struct_ptr, int arg) {
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return ap_set_flag_slot(cmd, cfg, arg);
 }
 
 /*
  * set a string value in the server config
  */
-static const char *oidc_set_string_slot(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_string_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return ap_set_string_slot(cmd, cfg, arg);
 }
 
 /*
  * set an integer value in the server config
  */
-static const char *oidc_set_int_slot(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_int_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return ap_set_int_slot(cmd, cfg, arg);
 }
 
 /*
  * set a URL value in a config record
  */
-static const char *oidc_set_url_slot_type(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_url_slot_type(cmd_parms *cmd, void *ptr,
 		const char *arg, const char *type) {
 	const char *rv =
 			type != NULL ?
@@ -360,26 +355,26 @@ static const char *oidc_set_url_slot_type(cmd_parms *cmd, void *ptr,
 /*
  * set a HTTPS value in the server config
  */
-static const char *oidc_set_https_slot(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_https_slot(cmd_parms *cmd, void *ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return oidc_set_url_slot_type(cmd, cfg, arg, "https");
 }
 
 /*
  * set a HTTPS/HTTP value in the server config
  */
-static const char *oidc_set_url_slot(cmd_parms *cmd, void *ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+static const char* oidc_set_url_slot(cmd_parms *cmd, void *ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return oidc_set_url_slot_type(cmd, cfg, arg, NULL);
 }
 
 /*
  * set a relative or absolute URL value in a config rec
  */
-static const char *oidc_set_relative_or_absolute_url_slot_dir_cfg(
+static const char* oidc_set_relative_or_absolute_url_slot_dir_cfg(
 		cmd_parms *cmd, void *ptr, const char *arg) {
 	if (arg[0] == OIDC_CHAR_FORWARD_SLASH) {
 		// relative uri
@@ -400,10 +395,10 @@ static const char *oidc_set_relative_or_absolute_url_slot_dir_cfg(
 /*
  * set a relative or absolute URL value in the server config
  */
-static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
+static const char* oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
 		void *ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	return oidc_set_relative_or_absolute_url_slot_dir_cfg(cmd, cfg, arg);
 }
 
@@ -411,9 +406,9 @@ static const char *oidc_set_relative_or_absolute_url_slot(cmd_parms *cmd,
  * set a directory value in the server config
  */
 // TODO: it's not really a syntax error... (could be fixed at runtime but then we'd have to restart the server)
-static const char *oidc_set_dir_slot(cmd_parms *cmd, void *ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+static const char* oidc_set_dir_slot(cmd_parms *cmd, void *ptr, const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_dir(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
@@ -423,9 +418,10 @@ static const char *oidc_set_dir_slot(cmd_parms *cmd, void *ptr, const char *arg)
 /*
  * set a path value in the server config, converting to absolute if necessary
  */
-static const char *oidc_set_path_slot(cmd_parms *cmd, void *ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+static const char* oidc_set_path_slot(cmd_parms *cmd, void *ptr,
+		const char *arg) {
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *full_path = oidc_util_get_full_path(cmd->pool, arg);
 	return ap_set_string_slot(cmd, cfg, full_path);
 }
@@ -433,41 +429,38 @@ static const char *oidc_set_path_slot(cmd_parms *cmd, void *ptr, const char *arg
 /*
  * set a string value in the server config with exec support
  */
-static const char *oidc_set_passphrase_slot(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_passphrase_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	int arglen = strlen(arg);
-	char **argv;
-	char *result;
-	const char *passphrase;
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
-
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
+	const char *passphrase = NULL;
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
+	int arglen = strlen(arg);
+	char **argv = NULL;
+	char *result = NULL;
 	/* Based on code from mod_session_crypto. */
 	if (arglen > 5 && strncmp(arg, "exec:", 5) == 0) {
 		if (apr_tokenize_to_argv(arg + 5, &argv, cmd->temp_pool) != APR_SUCCESS) {
 			return apr_pstrcat(cmd->pool,
-				"Unable to parse exec arguments from ", arg + 5, NULL);
+					"Unable to parse exec arguments from ", arg + 5, NULL);
 		}
 		argv[0] = ap_server_root_relative(cmd->temp_pool, argv[0]);
-
 		if (!argv[0]) {
-			return apr_pstrcat(cmd->pool,
-				"Invalid ", cmd->cmd->name, " exec location:", arg + 5, NULL);
+			return apr_pstrcat(cmd->pool, "Invalid ", cmd->cmd->name,
+					" exec location:", arg + 5, NULL);
 		}
-		result = ap_get_exec_line(cmd->pool, argv[0], (const char * const *)argv);
-
+		result = ap_get_exec_line(cmd->pool, argv[0],
+				(const char* const*) argv);
 		if (!result) {
 			return apr_pstrcat(cmd->pool,
-				"Unable to get passphrase from exec of ", arg + 5, NULL);
+					"Unable to get passphrase from exec of ", arg + 5, NULL);
 		}
-
 		passphrase = result;
 	} else {
-#endif
 		passphrase = arg;
-#if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
 	}
+#else
+	passphrase = arg;
 #endif
 
 	return ap_set_string_slot(cmd, cfg, passphrase);
@@ -476,10 +469,10 @@ static const char *oidc_set_passphrase_slot(cmd_parms *cmd, void *struct_ptr,
 /*
  * set the cookie domain in the server config and check it syntactically
  */
-static const char *oidc_set_cookie_domain(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_cookie_domain(cmd_parms *cmd, void *ptr,
 		const char *value) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_cookie_domain(cmd->pool, value);
 	if (rv == NULL)
 		cfg->cookie_domain = apr_pstrdup(cmd->pool, value);
@@ -489,10 +482,10 @@ static const char *oidc_set_cookie_domain(cmd_parms *cmd, void *ptr,
 /*
  * set the session storage type
  */
-static const char *oidc_set_session_type(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_session_type(cmd_parms *cmd, void *ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_session_type(cmd->pool, arg, &cfg->session_type,
 			&cfg->persistent_session_cookie);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -501,10 +494,10 @@ static const char *oidc_set_session_type(cmd_parms *cmd, void *ptr,
 /*
  * set the maximum size of a shared memory cache entry and enforces a minimum
  */
-static const char *oidc_set_cache_shm_entry_size_max(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_cache_shm_entry_size_max(cmd_parms *cmd, void *ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_cache_shm_entry_size_max(cmd->pool, arg,
 			&cfg->cache_shm_entry_size_max);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -513,10 +506,10 @@ static const char *oidc_set_cache_shm_entry_size_max(cmd_parms *cmd, void *ptr,
 /*
  * set the cache type
  */
-static const char *oidc_set_cache_type(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_cache_type(cmd_parms *cmd, void *ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_cache_type(cmd->pool, arg, &cfg->cache);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
@@ -524,10 +517,10 @@ static const char *oidc_set_cache_type(cmd_parms *cmd, void *ptr,
 /*
  * set SSL validation slot
  */
-static const char *oidc_set_ssl_validate_slot(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_ssl_validate_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	int b = 0;
 	const char *rv = oidc_parse_boolean(cmd->pool, arg, &b);
 	if (rv == NULL)
@@ -538,10 +531,10 @@ static const char *oidc_set_ssl_validate_slot(cmd_parms *cmd, void *struct_ptr,
 /*
  * set validate issuer slot
  */
-static const char *oidc_set_validate_issuer_slot(cmd_parms *cmd,
+static const char* oidc_set_validate_issuer_slot(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	int b = 0;
 	const char *rv = oidc_parse_boolean(cmd->pool, arg, &b);
 	if (rv == NULL)
@@ -561,10 +554,10 @@ oidc_valid_function_t oidc_cfg_get_valid_endpoint_auth_function(oidc_cfg *cfg) {
 /*
  * set an authentication method for an endpoint and check it is one that we support
  */
-static const char *oidc_set_endpoint_auth_slot(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_endpoint_auth_slot(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_cfg_get_valid_endpoint_auth_function(cfg)(cmd->pool,
 			arg);
 	if (rv == NULL)
@@ -575,10 +568,10 @@ static const char *oidc_set_endpoint_auth_slot(cmd_parms *cmd, void *struct_ptr,
 /*
  * set the response type used
  */
-static const char *oidc_set_response_type(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_response_type(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 
 	const char *rv = oidc_valid_response_type(cmd->pool, arg);
 	if (rv == NULL)
@@ -586,7 +579,7 @@ static const char *oidc_set_response_type(cmd_parms *cmd, void *struct_ptr,
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
-const char *oidc_parse_pkce_type(apr_pool_t *pool, const char *arg,
+const char* oidc_parse_pkce_type(apr_pool_t *pool, const char *arg,
 		oidc_proto_pkce_t **type) {
 	const char *rv = oidc_valid_pkce_method(pool, arg);
 	if (rv != NULL)
@@ -606,10 +599,10 @@ const char *oidc_parse_pkce_type(apr_pool_t *pool, const char *arg,
 /*
  * define the PCKE method to use
  */
-static const char *oidc_set_pkce_method(cmd_parms *cmd, void *ptr,
+static const char* oidc_set_pkce_method(cmd_parms *cmd, void *ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_pkce_type(cmd->pool, arg, &cfg->provider.pkce);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
@@ -617,10 +610,10 @@ static const char *oidc_set_pkce_method(cmd_parms *cmd, void *ptr,
 /*
  * set the response mode used
  */
-static const char *oidc_set_response_mode(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_response_mode(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 
 	const char *rv = oidc_valid_response_mode(cmd->pool, arg);
 	if (rv == NULL)
@@ -631,10 +624,10 @@ static const char *oidc_set_response_mode(cmd_parms *cmd, void *struct_ptr,
 /*
  * set the signing algorithm to be used by the OP (id_token/user_info)
  */
-static const char *oidc_set_signed_response_alg(cmd_parms *cmd,
+static const char* oidc_set_signed_response_alg(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_signed_response_alg(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
@@ -644,10 +637,10 @@ static const char *oidc_set_signed_response_alg(cmd_parms *cmd,
 /*
  * set the Content Encryption Key encryption algorithm to be used by the OP (id_token/user_info)
  */
-static const char *oidc_set_encrypted_response_alg(cmd_parms *cmd,
+static const char* oidc_set_encrypted_response_alg(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_encrypted_response_alg(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
@@ -657,10 +650,10 @@ static const char *oidc_set_encrypted_response_alg(cmd_parms *cmd,
 /*
  * set the content encryption algorithm to be used by the OP (id_token/user_info)
  */
-static const char *oidc_set_encrypted_response_enc(cmd_parms *cmd,
+static const char* oidc_set_encrypted_response_enc(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_encrypted_response_enc(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
@@ -670,10 +663,10 @@ static const char *oidc_set_encrypted_response_enc(cmd_parms *cmd,
 /*
  * set the userinfo endpoint token presentation method
  */
-static const char *oidc_set_userinfo_token_method(cmd_parms *cmd,
+static const char* oidc_set_userinfo_token_method(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_userinfo_token_method(cmd->pool, arg,
 			&cfg->provider.userinfo_token_method);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -682,10 +675,10 @@ static const char *oidc_set_userinfo_token_method(cmd_parms *cmd,
 /*
  * set the session inactivity timeout
  */
-static const char *oidc_set_session_inactivity_timeout(cmd_parms *cmd,
+static const char* oidc_set_session_inactivity_timeout(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_session_inactivity_timeout(cmd->pool, arg,
 			&cfg->session_inactivity_timeout);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -694,28 +687,20 @@ static const char *oidc_set_session_inactivity_timeout(cmd_parms *cmd,
 /*
  * set the maximum session duration; 0 means take it from the ID token expiry time
  */
-static const char *oidc_set_session_max_duration(cmd_parms *cmd,
+static const char* oidc_set_session_max_duration(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_session_max_duration(cmd->pool, arg,
 			&cfg->provider.session_max_duration);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
-typedef struct oidc_cleanup_keys_ctx {
-	apr_pool_t *pool;
-	apr_hash_t *keys;
-} oidc_cleanup_keys_ctx;
-
 static apr_status_t oidc_cleanup_keys(void *data) {
-	oidc_cleanup_keys_ctx *ctx = (oidc_cleanup_keys_ctx *) data;
-	oidc_jwk_t *jwk = NULL;
-	apr_hash_index_t *hi;
-	for (hi = apr_hash_first(ctx->pool, ctx->keys); hi;
-			hi = apr_hash_next(hi)) {
-		apr_hash_this(hi, NULL, NULL, (void **) &jwk);
-		oidc_jwk_destroy(jwk);
+	apr_array_header_t *keys_list = (apr_array_header_t*) data;
+	oidc_jwk_t **jwk = NULL;
+	while ((jwk = apr_array_pop(keys_list))) {
+		oidc_jwk_destroy(*jwk);
 	}
 	return APR_SUCCESS;
 }
@@ -723,16 +708,17 @@ static apr_status_t oidc_cleanup_keys(void *data) {
 /*
  * add a public key from an X.509 file to our list of JWKs with public keys
  */
-static const char *oidc_set_public_key_files(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_public_key_files(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
 	oidc_jwk_t *jwk = NULL;
 	oidc_jose_error_t err;
 
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 
 	int offset = (int) (long) cmd->info;
-	apr_hash_t **public_keys = (apr_hash_t **) ((char *) cfg + offset);
+	apr_array_header_t **public_keys = (apr_array_header_t**) ((char*) cfg
+			+ offset);
 
 	char *kid = NULL, *fname = NULL;
 	int fname_len;
@@ -751,15 +737,12 @@ static const char *oidc_set_public_key_files(cmd_parms *cmd, void *struct_ptr,
 	}
 
 	if (*public_keys == NULL) {
-		*public_keys = apr_hash_make(cmd->pool);
-		oidc_cleanup_keys_ctx *ctx = apr_pcalloc(cmd->pool,
-				sizeof(oidc_cleanup_keys_ctx));
-		ctx->pool = cmd->pool;
-		ctx->keys = *public_keys;
-		apr_pool_cleanup_register(cmd->pool, ctx, oidc_cleanup_keys,
+		*public_keys = apr_array_make(cmd->pool, 4, sizeof(const oidc_jwk_t*));
+		apr_pool_cleanup_register(cmd->pool, *public_keys, oidc_cleanup_keys,
 				oidc_cleanup_keys);
 	}
-	apr_hash_set(*public_keys, jwk->kid, APR_HASH_KEY_STRING, jwk);
+
+	*(const oidc_jwk_t**) apr_array_push(*public_keys) = jwk;
 
 	return NULL;
 }
@@ -767,15 +750,15 @@ static const char *oidc_set_public_key_files(cmd_parms *cmd, void *struct_ptr,
 /*
  * add a shared key to a list of JWKs with shared keys
  */
-static const char *oidc_set_shared_keys(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_shared_keys(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
 	oidc_jose_error_t err;
 	oidc_jwk_t *jwk = NULL;
 
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	int offset = (int) (long) cmd->info;
-	apr_hash_t **shared_keys = (apr_hash_t **) ((char *) cfg + offset);
+	apr_hash_t **shared_keys = (apr_hash_t**) ((char*) cfg + offset);
 
 	char *kid = NULL, *secret = NULL;
 	int key_len = 0;
@@ -785,7 +768,7 @@ static const char *oidc_set_shared_keys(cmd_parms *cmd, void *struct_ptr,
 		return rv;
 
 	jwk = oidc_jwk_create_symmetric_key(cmd->pool, kid,
-			(const unsigned char *) secret, key_len, TRUE, &err);
+			(const unsigned char*) secret, key_len, TRUE, &err);
 	if (jwk == NULL) {
 		return apr_psprintf(cmd->pool,
 				"oidc_jwk_create_symmetric_key failed for (kid=%s) \"%s\": %s",
@@ -803,10 +786,10 @@ static const char *oidc_set_shared_keys(cmd_parms *cmd, void *struct_ptr,
 /*
  * add a private key from an RSA private key file to our list of JWKs with private keys
  */
-static const char *oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
+static const char* oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	oidc_jwk_t *jwk = NULL;
 	oidc_jose_error_t err;
 
@@ -827,16 +810,13 @@ static const char *oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
 	}
 
 	if (cfg->private_keys == NULL) {
-		cfg->private_keys = apr_hash_make(cmd->pool);
-		oidc_cleanup_keys_ctx *ctx = apr_pcalloc(cmd->pool,
-				sizeof(oidc_cleanup_keys_ctx));
-		ctx->pool = cmd->pool;
-		ctx->keys = cfg->private_keys;
-		apr_pool_cleanup_register(cmd->pool, ctx, oidc_cleanup_keys,
-				oidc_cleanup_keys);
+		cfg->private_keys = apr_array_make(cmd->pool, 4,
+				sizeof(const oidc_jwk_t*));
+		apr_pool_cleanup_register(cmd->pool, cfg->private_keys,
+				oidc_cleanup_keys, oidc_cleanup_keys);
 	}
 
-	apr_hash_set(cfg->private_keys, jwk->kid, APR_HASH_KEY_STRING, jwk);
+	*(const oidc_jwk_t**) apr_array_push(cfg->private_keys) = jwk;
 
 	return NULL;
 }
@@ -844,10 +824,10 @@ static const char *oidc_set_private_key_files_enc(cmd_parms *cmd, void *dummy,
 /*
  * define how to pass the id_token/claims in HTTP headers
  */
-static const char * oidc_set_pass_idtoken_as(cmd_parms *cmd, void *dummy,
+static const char* oidc_set_pass_idtoken_as(cmd_parms *cmd, void *dummy,
 		const char *v1, const char *v2, const char *v3) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_pass_idtoken_as(cmd->pool, v1, v2, v3,
 			&cfg->pass_idtoken_as);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -856,10 +836,10 @@ static const char * oidc_set_pass_idtoken_as(cmd_parms *cmd, void *dummy,
 /*
  * define how to pass the userinfo/claims in HTTP headers
  */
-static const char * oidc_set_pass_userinfo_as(cmd_parms *cmd, void *dummy,
+static const char* oidc_set_pass_userinfo_as(cmd_parms *cmd, void *dummy,
 		const char *v1, const char *v2, const char *v3) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_pass_userinfo_as(cmd->pool, v1, v2, v3,
 			&cfg->pass_userinfo_as);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -868,9 +848,9 @@ static const char * oidc_set_pass_userinfo_as(cmd_parms *cmd, void *dummy,
 /*
  * define which method of pass an OAuth Bearer token is accepted
  */
-static const char * oidc_set_accept_oauth_token_in(cmd_parms *cmd, void *m,
+static const char* oidc_set_accept_oauth_token_in(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	const char *rv = oidc_parse_accept_oauth_token_in(cmd->pool, arg,
 			&dir_cfg->oauth_accept_token_in,
 			dir_cfg->oauth_accept_token_options);
@@ -880,11 +860,11 @@ static const char * oidc_set_accept_oauth_token_in(cmd_parms *cmd, void *m,
 /*
  * set the syntax of the token expiry claim in the introspection response
  */
-static const char * oidc_set_token_expiry_claim(cmd_parms *cmd, void *dummy,
+static const char* oidc_set_token_expiry_claim(cmd_parms *cmd, void *dummy,
 		const char *claim_name, const char *claim_format,
 		const char *claim_required) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 
 	const char *rv = NULL;
 
@@ -909,14 +889,14 @@ static const char * oidc_set_token_expiry_claim(cmd_parms *cmd, void *dummy,
 /*
  * specify cookies names to pass/strip
  */
-static const char * oidc_set_cookie_names(cmd_parms *cmd, void *m,
+static const char* oidc_set_cookie_names(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	int offset = (int) (long) cmd->info;
-	apr_array_header_t **cookie_names =
-			(apr_array_header_t **) ((char *) dir_cfg + offset);
+	apr_array_header_t **cookie_names = (apr_array_header_t**) ((char*) dir_cfg
+			+ offset);
 	if (*cookie_names == NULL)
-		*cookie_names = apr_array_make(cmd->pool, 3, sizeof(const char *));
+		*cookie_names = apr_array_make(cmd->pool, 3, sizeof(const char*));
 	*(const char**) apr_array_push((*cookie_names)) = arg;
 	return NULL;
 }
@@ -924,10 +904,10 @@ static const char * oidc_set_cookie_names(cmd_parms *cmd, void *m,
 /*
  * set the HTTP method to use in an OAuth 2.0 token introspection/validation call
  */
-static const char * oidc_set_introspection_method(cmd_parms *cmd, void *m,
+static const char* oidc_set_introspection_method(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_valid_introspection_method(cmd->pool, arg);
 	if (rv == NULL)
 		rv = ap_set_string_slot(cmd, cfg, arg);
@@ -937,9 +917,9 @@ static const char * oidc_set_introspection_method(cmd_parms *cmd, void *m,
 /*
  * set POST preservation behavior
  */
-static const char *oidc_set_preserve_post(cmd_parms *cmd, void *m,
+static const char* oidc_set_preserve_post(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	int b = 0;
 	const char *rv = oidc_parse_boolean(cmd->pool, arg, &b);
 	if (rv == NULL)
@@ -950,14 +930,14 @@ static const char *oidc_set_preserve_post(cmd_parms *cmd, void *m,
 /*
  * set the remote user name claims, optionally plus the regular expression applied to it
  */
-static const char *oidc_set_remote_user_claim(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_remote_user_claim(cmd_parms *cmd, void *struct_ptr,
 		const char *v1, const char *v2, const char *v3) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 
 	int offset = (int) (long) cmd->info;
 	oidc_remote_user_claim_t *remote_user_claim =
-			(oidc_remote_user_claim_t *) ((char *) cfg + offset);
+			(oidc_remote_user_claim_t*) ((char*) cfg + offset);
 
 	remote_user_claim->claim_name = v1;
 	if (v2)
@@ -971,20 +951,30 @@ static const char *oidc_set_remote_user_claim(cmd_parms *cmd, void *struct_ptr,
 /*
  * define how to pass claims information to the application: in headers and/or environment variables
  */
-static const char * oidc_set_pass_claims_as(cmd_parms *cmd, void *m,
-		const char *arg) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
-	const char *rv = oidc_parse_set_claims_as(cmd->pool, arg,
+static const char* oidc_set_pass_claims_as(cmd_parms *cmd, void *m,
+		const char *arg1, const char *arg2) {
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
+	const char *rv = oidc_parse_set_claims_as(cmd->pool, arg1,
 			&dir_cfg->pass_info_in_headers, &dir_cfg->pass_info_in_env_vars);
+	if (rv == NULL) {
+		if (arg2 != NULL) {
+			if (apr_strnatcmp(arg2, "base64url") == 0) {
+				dir_cfg->pass_info_base64url = 1;
+			} else {
+				rv = apr_pstrcat(cmd->temp_pool, "unknown encoding option \"",
+						arg2, "\", only \"base64url\" is supported", NULL);
+			}
+		}
+	}
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
 /*
  * define how to act on unauthenticated requests
  */
-static const char * oidc_set_unauth_action(cmd_parms *cmd, void *m,
+static const char* oidc_set_unauth_action(cmd_parms *cmd, void *m,
 		const char *arg1, const char *arg2) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	const char *rv = oidc_parse_unauth_action(cmd->pool, arg1,
 			&dir_cfg->unauth_action);
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
@@ -1005,9 +995,9 @@ static const char * oidc_set_unauth_action(cmd_parms *cmd, void *m,
 /*
  * define how to act on unauthorized requests
  */
-static const char * oidc_set_unautz_action(cmd_parms *cmd, void *m,
+static const char* oidc_set_unautz_action(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	const char *rv = oidc_parse_unautz_action(cmd->pool, arg,
 			&dir_cfg->unautz_action);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1016,10 +1006,10 @@ static const char * oidc_set_unautz_action(cmd_parms *cmd, void *m,
 /*
  * set the JWKS refresh interval
  */
-static const char *oidc_set_jwks_refresh_interval(cmd_parms *cmd,
+static const char* oidc_set_jwks_refresh_interval(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_jwks_refresh_interval(cmd->pool, arg,
 			&cfg->provider.jwks_refresh_interval);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1028,10 +1018,10 @@ static const char *oidc_set_jwks_refresh_interval(cmd_parms *cmd,
 /*
  * set the ID token "iat" slack
  */
-static const char *oidc_set_idtoken_iat_slack(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_set_idtoken_iat_slack(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_idtoken_iat_slack(cmd->pool, arg,
 			&cfg->provider.idtoken_iat_slack);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1040,10 +1030,10 @@ static const char *oidc_set_idtoken_iat_slack(cmd_parms *cmd, void *struct_ptr,
 /*
  * set the userinfo refresh interval
  */
-static const char *oidc_set_userinfo_refresh_interval(cmd_parms *cmd,
+static const char* oidc_set_userinfo_refresh_interval(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_userinfo_refresh_interval(cmd->pool, arg,
 			&cfg->provider.userinfo_refresh_interval);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1052,21 +1042,21 @@ static const char *oidc_set_userinfo_refresh_interval(cmd_parms *cmd,
 /*
  * define which data will be returned from the info hook
  */
-static const char * oidc_set_info_hook_data(cmd_parms *cmd, void *m,
+static const char* oidc_set_info_hook_data(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_info_hook_data(cmd->pool, arg,
 			&cfg->info_hook_data);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
-static const char * oidc_set_filtered_claims(cmd_parms *cmd, void *m,
+static const char* oidc_set_filtered_claims(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	int offset = (int) (long) cmd->info;
-	apr_hash_t **list = (apr_hash_t **) ((char *) cfg + offset);
+	apr_hash_t **list = (apr_hash_t**) ((char*) cfg + offset);
 	if (*list == NULL)
 		*list = apr_hash_make(cmd->pool);
 	apr_hash_set(*list, arg, APR_HASH_KEY_STRING, arg);
@@ -1076,12 +1066,12 @@ static const char * oidc_set_filtered_claims(cmd_parms *cmd, void *m,
 /*
  * set the token binding policy
  */
-static const char *oidc_set_token_binding_policy(cmd_parms *cmd,
+static const char* oidc_set_token_binding_policy(cmd_parms *cmd,
 		void *struct_ptr, const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	int offset = (int) (long) cmd->info;
-	int *token_binding_policy = (int *) ((char *) cfg + offset);
+	int *token_binding_policy = (int*) ((char*) cfg + offset);
 	const char *rv = oidc_parse_token_binding_policy(cmd->pool, arg,
 			token_binding_policy);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1090,10 +1080,10 @@ static const char *oidc_set_token_binding_policy(cmd_parms *cmd,
 /*
  * set the claim prefix
  */
-static const char *oidc_cfg_set_claim_prefix(cmd_parms *cmd, void *struct_ptr,
+static const char* oidc_cfg_set_claim_prefix(cmd_parms *cmd, void *struct_ptr,
 		const char *args) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	char *w = ap_getword_conf(cmd->pool, &args);
 	if (*w == '\0' || *args != 0)
 		cfg->claim_prefix = "";
@@ -1105,7 +1095,7 @@ static const char *oidc_cfg_set_claim_prefix(cmd_parms *cmd, void *struct_ptr,
 /*
  * get the claim prefix
  */
-const char *oidc_cfg_claim_prefix(request_rec *r) {
+const char* oidc_cfg_claim_prefix(request_rec *r) {
 	oidc_cfg *cfg = ap_get_module_config(r->server->module_config,
 			&auth_openidc_module);
 	if (cfg->claim_prefix == NULL)
@@ -1116,10 +1106,10 @@ const char *oidc_cfg_claim_prefix(request_rec *r) {
 /*
  * set the HTTP method used to send the authentication request to the provider
  */
-const char *oidc_set_auth_request_method(cmd_parms *cmd, void *struct_ptr,
+const char* oidc_set_auth_request_method(cmd_parms *cmd, void *struct_ptr,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_auth_request_method(cmd->pool, arg,
 			&cfg->provider.auth_request_method);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
@@ -1128,10 +1118,10 @@ const char *oidc_set_auth_request_method(cmd_parms *cmd, void *struct_ptr,
 /*
  * set the introspection authorization static bearer token
  */
-static const char *oidc_set_client_auth_bearer_token(cmd_parms *cmd,
+static const char* oidc_set_client_auth_bearer_token(cmd_parms *cmd,
 		void *struct_ptr, const char *args) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	char *w = ap_getword_conf(cmd->pool, &args);
 	cfg->oauth.introspection_client_auth_bearer_token =
 			(*w == '\0' || *args != 0) ? "" : w;
@@ -1139,12 +1129,12 @@ static const char *oidc_set_client_auth_bearer_token(cmd_parms *cmd,
 }
 
 /*
- * set the maximun number of parallel state cookies
+ * set the maximum number of parallel state cookies
  */
-static const char *oidc_set_max_number_of_state_cookies(cmd_parms *cmd,
+static const char* oidc_set_max_number_of_state_cookies(cmd_parms *cmd,
 		void *struct_ptr, const char *arg1, const char *arg2) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_max_number_of_state_cookies(cmd->pool, arg1,
 			arg2, &cfg->max_number_of_state_cookies,
 			&cfg->delete_oldest_state_cookies);
@@ -1152,7 +1142,7 @@ static const char *oidc_set_max_number_of_state_cookies(cmd_parms *cmd,
 }
 
 /*
- * return the maximun number of parallel state cookies
+ * return the maximum number of parallel state cookies
  */
 int oidc_cfg_max_number_of_state_cookies(oidc_cfg *cfg) {
 	if (cfg->max_number_of_state_cookies == OIDC_CONFIG_POS_INT_UNSET)
@@ -1172,9 +1162,9 @@ int oidc_cfg_delete_oldest_state_cookies(oidc_cfg *cfg) {
 /*
  * set the time in seconds that the access token needs to be valid for
  */
-static const char * oidc_set_refresh_access_token_before_expiry(cmd_parms *cmd,
+static const char* oidc_set_refresh_access_token_before_expiry(cmd_parms *cmd,
 		void *m, const char *arg1, const char *arg2) {
-	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg *) m;
+	oidc_dir_cfg *dir_cfg = (oidc_dir_cfg*) m;
 	const char *rv1 = oidc_parse_refresh_access_token_before_expiry(cmd->pool,
 			arg1, &dir_cfg->refresh_access_token_before_expiry);
 	if (rv1 != NULL)
@@ -1193,19 +1183,19 @@ static const char * oidc_set_refresh_access_token_before_expiry(cmd_parms *cmd,
 /*
  * define which header we use for calculating the fingerprint of the state during authentication
  */
-static const char * oidc_set_state_input_headers_as(cmd_parms *cmd, void *m,
+static const char* oidc_set_state_input_headers_as(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	const char *rv = oidc_parse_set_state_input_headers_as(cmd->pool, arg,
 			&cfg->state_input_headers);
 	return OIDC_CONFIG_DIR_RV(cmd, rv);
 }
 
-static const char * oidc_set_redirect_urls_allowed(cmd_parms *cmd, void *m,
+static const char* oidc_set_redirect_urls_allowed(cmd_parms *cmd, void *m,
 		const char *arg) {
-	oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(
-			cmd->server->module_config, &auth_openidc_module);
+	oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(cmd->server->module_config,
+			&auth_openidc_module);
 	if (cfg->redirect_urls_allowed == NULL)
 		cfg->redirect_urls_allowed = apr_hash_make(cmd->pool);
 	apr_hash_set(cfg->redirect_urls_allowed, arg, APR_HASH_KEY_STRING, arg);
@@ -1228,15 +1218,15 @@ int oidc_cfg_dir_logout_on_error_refresh(request_rec *r) {
 	return dir_cfg->logout_on_error_refresh;
 }
 
-char *oidc_cfg_dir_state_cookie_prefix(request_rec *r) {
-    oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
-                                                 &auth_openidc_module);
-    if ((dir_cfg->state_cookie_prefix == NULL)
-        || ((dir_cfg->state_cookie_prefix != NULL)
-            && (apr_strnatcmp(dir_cfg->state_cookie_prefix, OIDC_CONFIG_STRING_UNSET)
-                == 0)))
-        return OIDC_DEFAULT_STATE_COOKIE_PREFIX;
-    return dir_cfg->state_cookie_prefix;
+char* oidc_cfg_dir_state_cookie_prefix(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	if ((dir_cfg->state_cookie_prefix == NULL)
+			|| ((dir_cfg->state_cookie_prefix != NULL)
+					&& (apr_strnatcmp(dir_cfg->state_cookie_prefix,
+							OIDC_CONFIG_STRING_UNSET) == 0)))
+		return OIDC_DEFAULT_STATE_COOKIE_PREFIX;
+	return dir_cfg->state_cookie_prefix;
 }
 
 void oidc_cfg_provider_init(oidc_provider_t *provider) {
@@ -1291,7 +1281,7 @@ void oidc_cfg_provider_init(oidc_provider_t *provider) {
 /*
  * create a new server config record with defaults
  */
-void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
+void* oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	oidc_cfg *c = apr_pcalloc(pool, sizeof(oidc_cfg));
 
 	c->merged = FALSE;
@@ -1413,7 +1403,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 /*
  * merge a new server config with a base one
  */
-void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
+void* oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	oidc_cfg *c = apr_pcalloc(pool, sizeof(oidc_cfg));
 	oidc_cfg *base = BASE;
 	oidc_cfg *add = ADD;
@@ -1917,7 +1907,7 @@ int oidc_cfg_session_cache_fallback_to_cookie(request_rec *r) {
 /*
  * create a new directory config record with defaults
  */
-void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
+void* oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	oidc_dir_cfg *c = apr_pcalloc(pool, sizeof(oidc_dir_cfg));
 	c->discover_url = OIDC_CONFIG_STRING_UNSET;
 	c->cookie = OIDC_CONFIG_STRING_UNSET;
@@ -1932,6 +1922,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	c->strip_cookies = NULL;
 	c->pass_info_in_headers = OIDC_CONFIG_POS_INT_UNSET;
 	c->pass_info_in_env_vars = OIDC_CONFIG_POS_INT_UNSET;
+	c->pass_info_base64url = OIDC_CONFIG_POS_INT_UNSET;
 	c->oauth_accept_token_in = OIDC_CONFIG_POS_INT_UNSET;
 	c->oauth_accept_token_options = apr_hash_make(pool);
 	c->oauth_token_introspect_interval = -2;
@@ -1945,7 +1936,7 @@ void *oidc_create_dir_config(apr_pool_t *pool, char *path) {
 	return (c);
 }
 
-char *oidc_cfg_dir_discover_url(request_rec *r) {
+char* oidc_cfg_dir_discover_url(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	if ((dir_cfg->discover_url != NULL) && (apr_strnatcmp(dir_cfg->discover_url,
@@ -1954,7 +1945,7 @@ char *oidc_cfg_dir_discover_url(request_rec *r) {
 	return dir_cfg->discover_url;
 }
 
-char *oidc_cfg_dir_cookie(request_rec *r) {
+char* oidc_cfg_dir_cookie(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	if ((dir_cfg->cookie == NULL)
@@ -1965,7 +1956,7 @@ char *oidc_cfg_dir_cookie(request_rec *r) {
 	return dir_cfg->cookie;
 }
 
-char *oidc_cfg_dir_cookie_path(request_rec *r) {
+char* oidc_cfg_dir_cookie_path(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	if ((dir_cfg->cookie_path == NULL)
@@ -1976,7 +1967,7 @@ char *oidc_cfg_dir_cookie_path(request_rec *r) {
 	return dir_cfg->cookie_path;
 }
 
-char *oidc_cfg_dir_authn_header(request_rec *r) {
+char* oidc_cfg_dir_authn_header(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	if ((dir_cfg->authn_header == NULL)
@@ -2003,6 +1994,14 @@ apr_byte_t oidc_cfg_dir_pass_info_in_envvars(request_rec *r) {
 	return dir_cfg->pass_info_in_env_vars;
 }
 
+apr_byte_t oidc_cfg_dir_pass_info_base64url(request_rec *r) {
+	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
+			&auth_openidc_module);
+	if (dir_cfg->pass_info_base64url == OIDC_CONFIG_POS_INT_UNSET)
+		return OIDC_DEFAULT_PASS_APP_INFO_BASE64URL;
+	return dir_cfg->pass_info_base64url;
+}
+
 apr_byte_t oidc_cfg_dir_pass_refresh_token(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
@@ -2019,7 +2018,7 @@ apr_byte_t oidc_cfg_dir_accept_token_in(request_rec *r) {
 	return dir_cfg->oauth_accept_token_in;
 }
 
-char *oidc_cfg_dir_accept_token_in_option(request_rec *r, const char *key) {
+char* oidc_cfg_dir_accept_token_in_option(request_rec *r, const char *key) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return apr_hash_get(dir_cfg->oauth_accept_token_options, key,
@@ -2042,13 +2041,13 @@ int oidc_cfg_dir_preserve_post(request_rec *r) {
 	return dir_cfg->preserve_post;
 }
 
-apr_array_header_t *oidc_dir_cfg_pass_cookies(request_rec *r) {
+apr_array_header_t* oidc_dir_cfg_pass_cookies(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return dir_cfg->pass_cookies;
 }
 
-apr_array_header_t *oidc_dir_cfg_strip_cookies(request_rec *r) {
+apr_array_header_t* oidc_dir_cfg_strip_cookies(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return dir_cfg->strip_cookies;
@@ -2098,13 +2097,13 @@ int oidc_dir_cfg_unautz_action(request_rec *r) {
 	return dir_cfg->unautz_action;
 }
 
-char *oidc_dir_cfg_path_auth_request_params(request_rec *r) {
+char* oidc_dir_cfg_path_auth_request_params(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return dir_cfg->path_auth_request_params;
 }
 
-char *oidc_dir_cfg_path_scope(request_rec *r) {
+char* oidc_dir_cfg_path_scope(request_rec *r) {
 	oidc_dir_cfg *dir_cfg = ap_get_module_config(r->per_dir_config,
 			&auth_openidc_module);
 	return dir_cfg->path_scope;
@@ -2113,7 +2112,7 @@ char *oidc_dir_cfg_path_scope(request_rec *r) {
 /*
  * merge a new directory config with a base one
  */
-void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
+void* oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	oidc_dir_cfg *c = apr_pcalloc(pool, sizeof(oidc_dir_cfg));
 	oidc_dir_cfg *base = BASE;
 	oidc_dir_cfg *add = ADD;
@@ -2153,6 +2152,9 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->pass_info_in_env_vars =
 			add->pass_info_in_env_vars != OIDC_CONFIG_POS_INT_UNSET ?
 					add->pass_info_in_env_vars : base->pass_info_in_env_vars;
+	c->pass_info_base64url =
+			add->pass_info_base64url != OIDC_CONFIG_POS_INT_UNSET ?
+					add->pass_info_base64url : base->pass_info_base64url;
 	c->oauth_accept_token_in =
 			add->oauth_accept_token_in != OIDC_CONFIG_POS_INT_UNSET ?
 					add->oauth_accept_token_in : base->oauth_accept_token_in;
@@ -2187,9 +2189,10 @@ void *oidc_merge_dir_config(apr_pool_t *pool, void *BASE, void *ADD) {
 					add->logout_on_error_refresh :
 					base->logout_on_error_refresh;
 
-    c->state_cookie_prefix =
-            (apr_strnatcmp(add->state_cookie_prefix, OIDC_CONFIG_STRING_UNSET) != 0) ?
-            add->state_cookie_prefix : base->state_cookie_prefix;
+	c->state_cookie_prefix =
+			(apr_strnatcmp(add->state_cookie_prefix, OIDC_CONFIG_STRING_UNSET)
+					!= 0) ?
+							add->state_cookie_prefix : base->state_cookie_prefix;
 
 	return (c);
 }
@@ -2412,9 +2415,9 @@ static void oidc_ssl_id_callback(CRYPTO_THREADID *id) {
 #endif /* defined(OPENSSL_THREADS) && APR_HAS_THREADS */
 
 static apr_status_t oidc_cleanup_child(void *data) {
-	server_rec *sp = (server_rec *) data;
+	server_rec *sp = (server_rec*) data;
 	while (sp != NULL) {
-		oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(sp->module_config,
+		oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(sp->module_config,
 				&auth_openidc_module);
 		if (cfg->cache->destroy != NULL) {
 			if (cfg->cache->destroy(sp) != APR_SUCCESS) {
@@ -2424,8 +2427,10 @@ static apr_status_t oidc_cleanup_child(void *data) {
 
 		// can do this even though we haven't got a deep copy
 		// since references within the object will be set to NULL
-		oidc_jwk_list_destroy(sp->process->pool, cfg->oauth.verify_public_keys);
-		oidc_jwk_list_destroy(sp->process->pool, cfg->oauth.verify_shared_keys);
+		oidc_jwk_list_destroy_hash(sp->process->pool,
+				cfg->oauth.verify_public_keys);
+		oidc_jwk_list_destroy_hash(sp->process->pool,
+				cfg->oauth.verify_shared_keys);
 		oidc_jwk_list_destroy(sp->process->pool, cfg->public_keys);
 		oidc_jwk_list_destroy(sp->process->pool, cfg->private_keys);
 
@@ -2455,7 +2460,7 @@ static apr_status_t oidc_cleanup_parent(void *data) {
 	EVP_cleanup();
 	curl_global_cleanup();
 
-	ap_log_error(APLOG_MARK, APLOG_INFO, 0, (server_rec * ) data,
+	ap_log_error(APLOG_MARK, APLOG_INFO, 0, (server_rec* ) data,
 			"%s - shutdown", NAMEVERSION);
 
 	return APR_SUCCESS;
@@ -2476,7 +2481,7 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 	 */
 	apr_pool_userdata_get(&data, userdata_key, s->process->pool);
 	if (data == NULL) {
-		apr_pool_userdata_set((const void *) 1, userdata_key,
+		apr_pool_userdata_set((const void*) 1, userdata_key,
 				apr_pool_cleanup_null, s->process->pool);
 		return OK;
 	}
@@ -2538,7 +2543,7 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 
 	server_rec *sp = s;
 	while (sp != NULL) {
-		oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(sp->module_config,
+		oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(sp->module_config,
 				&auth_openidc_module);
 		if (cfg->cache->post_config != NULL) {
 			if (cfg->cache->post_config(sp) != OK)
@@ -2568,7 +2573,7 @@ static int oidc_post_config(apr_pool_t *pool, apr_pool_t *p1, apr_pool_t *p2,
 }
 
 #if MODULE_MAGIC_NUMBER_MAJOR >= 20100714
-static const char *oidc_parse_config(cmd_parms *cmd, const char *require_line,
+static const char* oidc_parse_config(cmd_parms *cmd, const char *require_line,
 		const void **parsed_require_line) {
 	const char *expr_err = NULL;
 	ap_expr_info_t *expr;
@@ -2601,7 +2606,7 @@ static const authz_provider oidc_authz_claims_expr_provider = {
 static void oidc_child_init(apr_pool_t *p, server_rec *s) {
 	server_rec *sp = s;
 	while (sp != NULL) {
-		oidc_cfg *cfg = (oidc_cfg *) ap_get_module_config(sp->module_config,
+		oidc_cfg *cfg = (oidc_cfg*) ap_get_module_config(sp->module_config,
 				&auth_openidc_module);
 		if (cfg->cache->child_init != NULL) {
 			if (cfg->cache->child_init(p, sp) != APR_SUCCESS) {
@@ -2624,7 +2629,7 @@ static void oidc_filter_in_insert_filter(request_rec *r) {
 		return;
 
 	apr_table_t *userdata_post_params = NULL;
-	apr_pool_userdata_get((void **) &userdata_post_params,
+	apr_pool_userdata_get((void**) &userdata_post_params,
 			OIDC_USERDATA_POST_PARAMS_KEY, r->pool);
 	if (userdata_post_params == NULL)
 		return;
@@ -2668,7 +2673,7 @@ static apr_status_t oidc_filter_in_filter(ap_filter_t *f,
 
 			APR_BUCKET_REMOVE(b_in);
 
-			apr_pool_userdata_get((void **) &userdata_post_params,
+			apr_pool_userdata_get((void**) &userdata_post_params,
 					OIDC_USERDATA_POST_PARAMS_KEY, f->r->pool);
 
 			if (userdata_post_params != NULL) {
@@ -2818,7 +2823,7 @@ const command_rec oidc_config_cmds[] = {
 				oidc_set_public_key_files,
 				(void *)APR_OFFSETOF(oidc_cfg, public_keys),
 				RSRC_CONF,
-				"The fully qualified names of the files that contain the X.509 certificates that contains the RSA public keys that can be used for encryption by the OP."),
+				"The fully qualified names of the files that contain the RSA public keys or X.509 certificates that contains the RSA public keys that can be used for signature validation or encryption by the OP."),
 		AP_INIT_ITERATE(OIDCPrivateKeyFiles,
 				oidc_set_private_key_files_enc,
 				NULL,
@@ -3250,7 +3255,7 @@ const command_rec oidc_config_cmds[] = {
 				(void *) APR_OFFSETOF(oidc_dir_cfg, unautz_action),
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Sets the action taken when an unauthorized request occurs: must be one of \"401\" (default), \"403\" or \"auth\"."),
-		AP_INIT_TAKE1(OIDCPassClaimsAs,
+		AP_INIT_TAKE12(OIDCPassClaimsAs,
 				oidc_set_pass_claims_as, NULL,
 				RSRC_CONF|ACCESS_CONF|OR_AUTHCFG,
 				"Specify how claims are passed to the application(s); must be one of \"none\", \"headers\", \"environment\" or \"both\" (default)."),
