@@ -729,9 +729,56 @@ static apr_byte_t oidc_util_http_call(request_rec *r, const char *url,
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,
 			(ssl_validate_server != FALSE ? 2L : 0L));
 
-	if (c->ca_bundle_path != NULL) {
-		curl_easy_setopt(curl, CURLOPT_CAINFO, c->ca_bundle_path);
+	if (r->subprocess_env != NULL) {
+		const char *env_var_value = apr_table_get(r->subprocess_env,
+				"CURLOPT_SSL_OPTIONS");
+		if (env_var_value != NULL) {
+			oidc_debug(r, "SSL options environment variable %s=%s found",
+					"CURLOPT_SSL_OPTIONS", env_var_value);
+			if (strstr(env_var_value, "CURLSSLOPT_ALLOW_BEAST")) {
+				oidc_debug(r,
+						"curl_easy_setopt CURLOPT_SSL_OPTIONS CURLSSLOPT_ALLOW_BEAST");
+				curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+						CURLSSLOPT_ALLOW_BEAST);
+			}
+#if LIBCURL_VERSION_NUM >= 0x072c00
+			if (strstr(env_var_value, "CURLSSLOPT_NO_REVOKE")) {
+				oidc_debug(r,
+						"curl_easy_setopt CURLOPT_SSL_OPTIONS CURLSSLOPT_NO_REVOKE");
+				curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+						CURLSSLOPT_NO_REVOKE);
+			}
+#endif
+#if LIBCURL_VERSION_NUM >= 0x074400
+			if (strstr(env_var_value, "CURLSSLOPT_NO_PARTIALCHAIN")) {
+				oidc_debug(r,
+						"curl_easy_setopt CURLOPT_SSL_OPTIONS CURLSSLOPT_NO_PARTIALCHAIN");
+				curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+						CURLSSLOPT_NO_PARTIALCHAIN);
+			}
+#endif
+#if LIBCURL_VERSION_NUM >= 0x074600
+			if (strstr(env_var_value, "CURLSSLOPT_REVOKE_BEST_EFFORT")) {
+				oidc_debug(r,
+						"curl_easy_setopt CURLOPT_SSL_OPTIONS CURLSSLOPT_REVOKE_BEST_EFFORT");
+				curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+						CURLSSLOPT_REVOKE_BEST_EFFORT);
+			}
+#endif
+#if LIBCURL_VERSION_NUM >= 0x074700
+			if (strstr(env_var_value, "CURLSSLOPT_NATIVE_CA")) {
+				oidc_debug(r,
+						"curl_easy_setopt CURLOPT_SSL_OPTIONS CURLSSLOPT_NATIVE_CA");
+				curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+						CURLSSLOPT_NATIVE_CA);
+			}
+#endif
+		}
 	}
+
+	if (c->ca_bundle_path != NULL)
+		curl_easy_setopt(curl, CURLOPT_CAINFO, c->ca_bundle_path);
+
 #ifdef WIN32
 	else {
 		DWORD buflen;
@@ -959,6 +1006,10 @@ const char *oidc_util_set_cookie_append_value(request_rec *r, oidc_cfg *c) {
 	return env_var_value;
 }
 
+apr_byte_t oidc_util_request_is_secure(request_rec *r) {
+	return (apr_strnatcasecmp("https", oidc_get_current_url_scheme(r)) == 0);
+}
+
 /*
  * set a cookie in the HTTP response headers
  */
@@ -996,7 +1047,7 @@ void oidc_util_set_cookie(request_rec *r, const char *cookieName,
 		headerString = apr_psprintf(r->pool, "%s; %s=%s", headerString,
 				OIDC_COOKIE_FLAG_DOMAIN, c->cookie_domain);
 
-	if (apr_strnatcasecmp("https", oidc_get_current_url_scheme(r)) == 0)
+	if (oidc_util_request_is_secure(r))
 		headerString = apr_psprintf(r->pool, "%s; %s", headerString,
 				OIDC_COOKIE_FLAG_SECURE);
 
