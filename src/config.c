@@ -248,6 +248,8 @@
 #define OIDCCacheFileCleanInterval             "OIDCCacheFileCleanInterval"
 #define OIDCRedisCachePassword                 "OIDCRedisCachePassword"
 #define OIDCRedisCacheDatabase                 "OIDCRedisCacheDatabase"
+#define OIDCRedisCacheConnectTimeout           "OIDCRedisCacheConnectTimeout"
+#define OIDCRedisCacheTimeout                  "OIDCRedisCacheTimeout"
 #define OIDCHTMLErrorTemplate                  "OIDCHTMLErrorTemplate"
 #define OIDCDiscoverURL                        "OIDCDiscoverURL"
 #define OIDCPassCookies                        "OIDCPassCookies"
@@ -1342,6 +1344,8 @@ void* oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
 	c->cache_redis_server = NULL;
 	c->cache_redis_password = NULL;
 	c->cache_redis_database = -1;
+	c->cache_redis_connect_timeout = -1;
+	c->cache_redis_timeout = -1;
 #endif
 
 	c->metadata_dir = NULL;
@@ -1768,6 +1772,12 @@ void* oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
 	c->cache_redis_database =
 			add->cache_redis_database != -1 ?
 					add->cache_redis_database : base->cache_redis_database;
+	c->cache_redis_connect_timeout =
+			add->cache_redis_connect_timeout != -1 ?
+					add->cache_redis_connect_timeout : base->cache_redis_connect_timeout;
+	c->cache_redis_timeout =
+			add->cache_redis_timeout != -1 ?
+					add->cache_redis_timeout : base->cache_redis_timeout;
 #endif
 
 	c->metadata_dir =
@@ -3208,6 +3218,16 @@ const command_rec oidc_config_cmds[] = {
 				(void*)APR_OFFSETOF(oidc_cfg, cache_redis_database),
 				RSRC_CONF,
 				"Database for the Redis servers."),
+		AP_INIT_TAKE1(OIDCRedisCacheConnectTimeout,
+				oidc_set_int_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, cache_redis_connect_timeout),
+				RSRC_CONF,
+				"Timeout for connecting to the Redis servers."),
+		AP_INIT_TAKE1(OIDCRedisCacheTimeout,
+				oidc_set_int_slot,
+				(void*)APR_OFFSETOF(oidc_cfg, cache_redis_timeout),
+				RSRC_CONF,
+				"Timeout waiting for a response of the Redis servers."),
 #endif
 		AP_INIT_TAKE1(OIDCHTMLErrorTemplate,
 				oidc_set_string_slot,
