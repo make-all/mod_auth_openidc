@@ -688,16 +688,16 @@ static apr_byte_t oidc_restore_proto_state(request_rec *r, oidc_cfg *c,
 	/* check that the timestamp is not beyond the valid interval */
 	if (apr_time_now() > ts + apr_time_from_sec(c->state_timeout)) {
 		oidc_error(r, "state has expired");
-		/*
-		 * note that this overrides redirection to the OIDCDefaultURL as done later...
-		 * see: https://groups.google.com/forum/?utm_medium=email&utm_source=footer#!msg/mod_auth_openidc/L4JFBw-XCNU/BWi2Fmk2AwAJ
-		 */
-		oidc_util_html_send_error(r, c->error_template,
-				"Invalid Authentication Response",
-				apr_psprintf(r->pool,
-						"This is due to a timeout; please restart your authentication session by re-entering the URL/bookmark you originally wanted to access: %s",
-						oidc_proto_state_get_original_url(*proto_state)),
-						OK);
+		if ((c->default_sso_url == NULL)
+				|| (apr_table_get(r->subprocess_env, "OIDC_NO_DEFAULT_URL_ON_STATE_TIMEOUT") != NULL)) {
+			oidc_util_html_send_error(r, c->error_template, "Invalid Authentication Response", apr_psprintf(r->pool, "This is due to a timeout; please restart your authentication session by re-entering the URL/bookmark you originally wanted to access: %s", oidc_proto_state_get_original_url(*proto_state)),
+									  OK);
+			/*
+			 * a hack for Apache 2.4 to prevent it from writing its own 500/400/302 HTML document
+			 * text by making ap_send_error_response in http_protocol.c return early...
+			 */
+			r->header_only = 1;
+		}
 		oidc_proto_state_destroy(*proto_state);
 		return FALSE;
 	}
@@ -992,7 +992,7 @@ apr_byte_t oidc_get_provider_from_session(request_rec *r, oidc_cfg *c,
 	/* get the issuer value from the session state */
 	const char *issuer = oidc_session_get_issuer(r, session);
 	if (issuer == NULL) {
-		oidc_error(r, "session corrupted: no issuer found in session");
+		oidc_warn(r, "empty or invalid session: no issuer found");
 		return FALSE;
 	}
 
@@ -1917,6 +1917,7 @@ static int oidc_handle_authorization_response(request_rec *r, oidc_cfg *c,
 					"invalid authorization response state; a default SSO URL is set, sending the user there: %s",
 					c->default_sso_url);
 			oidc_util_hdr_out_location_set(r, c->default_sso_url);
+			//oidc_util_hdr_err_out_add(r, "Location", c->default_sso_url));
 			return HTTP_MOVED_TEMPORARILY;
 		}
 		oidc_error(r,

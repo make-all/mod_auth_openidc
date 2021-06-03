@@ -1,3 +1,17 @@
+06/02/2021
+- do not send state timeout HTML document when OIDCDefaultURL is set; this can be overridden by using e.g.:
+  SetEnvIfExpr true OIDC_NO_DEFAULT_URL_ON_STATE_TIMEOUT=true 
+- release 2.4.8.4
+
+06/01/2021
+- avoid Apache 2.4 appending 400/302(200/404) HTML document text to state timeout HTML info page
+  see also f5959d767b0eec4856d561cbaa6d2262a52da551 and #484; at least Debian Buster was affected
+- release 2.4.8.3
+
+05/18/2021
+- make error "session corrupted: no issuer found in session" a warning only so a logout call for a
+  non-existing session no longer produces error messages
+
 05/08/2021
 - store timestamps in session in seconds to avoid string conversion problems on some (libapr-1)
   platform build/run combinations, causing "maximum session duration exceeded" errors
